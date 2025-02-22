@@ -1,0 +1,88 @@
+const mongoose = require("mongoose");
+const { CustomObjectId } = require("../utils/idGenerator");
+
+const serviceSchema = new mongoose.Schema(
+	{
+		_id: {
+			type: String,
+			required: true,
+		},
+		category: { type: String, required: true },
+		name: { type: String, required: true },
+		description: { type: String },
+		actualPrice: { type: Number, required: true },
+		salePrice: { type: Number, required: true },
+		hsncode: { type: String, required: true },
+		// dueDate: { type: Date, required: true },
+		processingDays: {
+			type: Number,
+			required: true, 
+			default: 7, // Default processing time in days
+		},
+		requiredDocuments: [
+			{
+				name: String,
+				description: String,
+				required: Boolean,
+			},
+		],
+	},
+	{ timestamps: true }
+);
+
+// Middleware: Generate _id with "SER" prefix before validation
+serviceSchema.pre("validate", async function (next) {
+	if (!this._id) {
+		this._id = await CustomObjectId.generate("SER");
+	}
+	next();
+});
+module.exports = mongoose.model("Service", serviceSchema);
+
+// Updated Service Model
+// const mongoose = require("mongoose");
+// const { CustomObjectId } = require("../utils/idGenerator");
+
+// const packageSchema = new mongoose.Schema({
+// 	name: { type: String, required: true },
+// 	description: { type: String },
+// 	actualPrice: { type: Number, required: true },
+// 	salePrice: { type: Number, required: true },
+// 	features: [{ type: String }],
+// 	processingDays: {
+// 		type: Number,
+// 		required: true,
+// 		default: 7,
+// 	},
+// });
+
+// const serviceSchema = new mongoose.Schema(
+// 	{
+// 		_id: {
+// 			type: String,
+// 			required: true,
+// 		},
+// 		category: { type: String, required: true },
+// 		name: { type: String, required: true },
+// 		description: { type: String },
+// 		hsncode: { type: String, required: true },
+// 		packages: [packageSchema],
+// 		requiredDocuments: [
+// 			{
+// 				name: String,
+// 				description: String,
+// 				required: Boolean,
+// 			},
+// 		],
+// 	},
+// 	{ timestamps: true }
+// );
+
+// serviceSchema.pre("validate", async function (next) {
+// 	if (!this._id) {
+// 		this._id = await CustomObjectId.generate("SER");
+// 	}
+// 	next();
+// });
+
+// module.exports = mongoose.model("Service", serviceSchema);
