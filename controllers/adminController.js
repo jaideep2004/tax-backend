@@ -195,67 +195,6 @@ const getAllServices = async (req, res) => {
 	}
 };
 
-// const getAllCustomerOrders = async (req, res) => {
-// 	try {
-// 		console.log("Fetching all customer orders...");
-
-// 		// Find all users with role 'customer' and select relevant fields
-// 		const customers = await User.find(
-// 			{ role: "customer" },
-// 			"name email services"
-// 		);
-
-// 		console.log(`Found ${customers.length} customers`);
-
-// 		// Extract and process order information
-// 		const orderData = customers.reduce((acc, customer) => {
-// 			// Check if customer has services
-// 			if (customer.services && customer.services.length > 0) {
-// 				// Extract order information from each service
-// 				const customerOrders = customer.services.map((service) => ({
-// 					customerId: customer._id,
-// 					customerName: customer.name,
-// 					customerMobile: customer.mobile,
-// 					customerEmail: customer.email,
-// 					orderId: service.orderId,
-// 					serviceId: service.serviceId,
-// 					status: service.status,
-// 					purchasedAt: service.purchasedAt,
-// 					employeeId: service.employeeId,
-// 				}));
-
-// 				console.log(
-// 					`Customer ${customer.name} has ${customerOrders.length} orders`
-// 				);
-// 				return [...acc, ...customerOrders];
-// 			}
-// 			console.log(`Customer ${customer.name} has no orders`);
-// 			return acc;
-// 		}, []);
-
-// 		console.log("Total orders processed:", orderData.length);
-// 		console.log("Sample order data:", orderData[0]); // Log first order for verification
-
-// 		// Sort orders by purchase date (most recent first)
-// 		const sortedOrders = orderData.sort(
-// 			(a, b) => new Date(b.purchasedAt) - new Date(a.purchasedAt)
-// 		);
-
-// 		res.status(200).json({
-// 			success: true,
-// 			count: orderData.length,
-// 			orders: sortedOrders,
-// 		});
-// 	} catch (error) {
-// 		console.error("Error in getAllCustomerOrders:", error);
-// 		res.status(500).json({
-// 			success: false,
-// 			message: "Error fetching customer orders",
-// 			error: error.message,
-// 		});
-// 	}
-// };
-
 const getAllCustomerOrders = async (req, res) => {
 	try {
 		console.log("Fetching all customer orders...");
@@ -382,10 +321,272 @@ const getAllCustomerOrders = async (req, res) => {
 	}
 };
 
+// New admin controller function
+// const assignOrderToEmployee = async (req, res) => {
+// 	try {
+// 		const { orderId, employeeId } = req.body;
+
+// 		if (!orderId || !employeeId) {
+// 			return res.status(400).json({
+// 				success: false,
+// 				message: "Order ID and Employee ID are required",
+// 			});
+// 		}
+
+// 		// Find the customer with the given order ID
+// 		const customer = await User.findOne({
+// 			"services.orderId": orderId,
+// 			role: "customer",
+// 		});
+
+// 		if (!customer) {
+// 			return res.status(404).json({
+// 				success: false,
+// 				message: "Order not found",
+// 			});
+// 		}
+
+// 		// Find the employee
+// 		const employee = await User.findOne({
+// 			_id: employeeId,
+// 			role: "employee",
+// 		});
+
+// 		if (!employee) {
+// 			return res.status(404).json({
+// 				success: false,
+// 				message: "Employee not found",
+// 			});
+// 		}
+
+// 		// Find the service index in customer's services array
+// 		const serviceIndex = customer.services.findIndex(
+// 			(service) => service.orderId === orderId
+// 		);
+
+// 		if (serviceIndex === -1) {
+// 			return res.status(404).json({
+// 				success: false,
+// 				message: "Order not found in customer's services",
+// 			});
+// 		}
+
+// 		// Get the service ID
+// 		const serviceId = customer.services[serviceIndex].serviceId;
+
+// 		// Check if employee can handle this service
+// 		if (!employee.servicesHandled.includes(serviceId)) {
+// 			return res.status(400).json({
+// 				success: false,
+// 				message: "Employee does not handle this service type",
+// 			});
+// 		}
+
+// 		// Update the employee ID for the specific order
+// 		customer.services[serviceIndex].employeeId = employeeId;
+
+// 		// Add customer to employee's assignedCustomers if not already there
+// 		if (!employee.assignedCustomers.includes(customer._id)) {
+// 			employee.assignedCustomers.push(customer._id);
+// 		}
+
+// 		// Save both documents
+// 		await customer.save();
+// 		await employee.save();
+
+// 		// Send email notifications
+// 		await sendEmail(
+// 			customer.email,
+// 			"Employee Assigned to Your Order",
+// 			`Hello ${customer.name},\n\nWe've assigned ${employee.name} to handle your order #${orderId}. They will contact you shortly.`
+// 		);
+
+// 		await sendEmail(
+// 			employee.email,
+// 			"New Order Assignment",
+// 			`Hello ${employee.name},\n\nYou've been assigned to handle order #${orderId} for customer ${customer.name} (${customer.email}).`
+// 		);
+
+// 		res.status(200).json({
+// 			success: true,
+// 			message: "Order assigned to employee successfully",
+// 		});
+// 	} catch (error) {
+// 		console.error("Error assigning order to employee:", error);
+// 		res.status(500).json({
+// 			success: false,
+// 			message: "Error assigning order to employee",
+// 			error: error.message,
+// 		});
+// 	}
+// };
+
+const assignOrderToEmployee = async (req, res) => {
+	try {
+		const { orderId, employeeId } = req.body;
+		console.log("Received Payload:", { orderId, employeeId });
+		if (!orderId || !employeeId) {
+			return res.status(400).json({
+				success: false,
+				message: "Order ID and Employee ID are required",
+			});
+		}
+
+		// Find the customer with the given order ID
+		const customer = await User.findOne({
+			"services.orderId": orderId,
+			role: "customer",
+		});
+
+		if (!customer) {
+			return res.status(404).json({
+				success: false,
+				message: "Order not found",
+			});
+		}
+
+		// Find the employee
+		const employee = await User.findOne({
+			_id: employeeId,
+			role: "employee",
+		});
+
+		if (!employee) {
+			return res.status(404).json({
+				success: false,
+				message: "Employee not found",
+			});
+		}
+
+		// Find the service index in customer's services array
+		const serviceIndex = customer.services.findIndex(
+			(service) => service.orderId === orderId
+		);
+
+		if (serviceIndex === -1) {
+			return res.status(404).json({
+				success: false,
+				message: "Order not found in customer's services",
+			});
+		}
+
+		// Get the service ID
+		const serviceId = customer.services[serviceIndex].serviceId;
+
+		// Update the employee ID for the specific order
+		customer.services[serviceIndex].employeeId = employeeId;
+
+		// Add customer to employee's assignedCustomers if not already there
+		if (!employee.assignedCustomers.some((c) => c._id === customer._id)) {
+			// Push the full customer object, mapping all relevant fields from the customer document
+			employee.assignedCustomers.push({
+				_id: customer._id,
+				name: customer.name,
+				email: customer.email,
+				role: customer.role, // Required fields
+				mobile: customer.mobile || null,
+				username: customer.username || null,
+				isActive: customer.isActive || false,
+				isProfileComplete: customer.isProfileComplete || false,
+				services: customer.services.map((service) => ({
+					orderId: service.orderId,
+					serviceId: service.serviceId,
+					activated: service.activated,
+					purchasedAt: service.purchasedAt,
+					employeeId: service.employeeId,
+					status: service.status,
+					dueDate: service.dueDate,
+					documents: service.documents.map((doc) => ({
+						filename: doc.filename,
+						originalName: doc.originalName,
+						path: doc.path,
+						mimetype: doc.mimetype,
+						size: doc.size,
+						uploadedAt: doc.uploadedAt,
+					})),
+					queries: service.queries.map((query) => ({
+						query: query.query,
+						status: query.status,
+						replies: query.replies.map((reply) => ({
+							employeeId: reply.employeeId,
+							response: reply.response,
+							createdAt: reply.createdAt,
+						})),
+						attachments: query.attachments.map((attachment) => ({
+							filePath: attachment.filePath,
+							originalName: attachment.originalName,
+						})),
+						createdAt: query.createdAt,
+					})),
+					feedback: service.feedback.map((fb) => ({
+						feedback: fb.feedback,
+						rating: fb.rating,
+						createdAt: fb.createdAt,
+					})),
+				})),
+				paymentHistory: customer.paymentHistory.map((payment) => ({
+					paymentId: payment.paymentId,
+					amount: payment.amount,
+					date: payment.date,
+					status: payment.status,
+					paymentMethod: payment.paymentMethod,
+				})),
+				dob: customer.dob || null,
+				gender: customer.gender || null,
+				pan: customer.pan || null,
+				gst: customer.gst || null,
+				address: customer.address || null,
+				city: customer.city || null,
+				state: customer.state || null,
+				country: customer.country || null,
+				postalCode: customer.postalCode || null,
+				natureEmployment: customer.natureEmployment || null,
+				annualIncome: customer.annualIncome || null,
+				education: customer.education || null,
+				certifications: customer.certifications || null,
+				institute: customer.institute || null,
+				completionDate: customer.completionDate || null,
+				activeFrom: customer.activeFrom || null,
+				activeTill: customer.activeTill || null,
+				customerCreateDate: customer.customerCreateDate || null,
+			});
+		}
+
+		// Save both documents
+		await customer.save();
+		await employee.save();
+
+		// Send email notifications
+		await sendEmail(
+			customer.email,
+			"Employee Assigned to Your Order",
+			`Hello ${customer.name},\n\nWe've assigned ${employee.name} to handle your order #${orderId}. They will contact you shortly.`
+		);
+
+		await sendEmail(
+			employee.email,
+			"New Order Assignment",
+			`Hello ${employee.name},\n\nYou've been assigned to handle order #${orderId} for customer ${customer.name} (${customer.email}).`
+		);
+
+		res.status(200).json({
+			success: true,
+			message: "Order assigned to employee successfully",
+		});
+	} catch (error) {
+		console.error("Error assigning order to employee:", error);
+		res.status(500).json({
+			success: false,
+			message: "Error assigning order to employee",
+			error: error.message,
+		});
+	}
+};
+
 const getDashboardData = async (req, res) => {
 	try {
 		// Get all services
-		const services = await Service.find({});
+		const services = await Service.find({}); 
 
 		// Get all users with populated service details and complete information
 		const users = await User.find({})
@@ -470,174 +671,6 @@ const createService = async (req, res) => {
 		res.status(500).json({ message: "Error creating service" });
 	}
 };
-
-// const createService = async (req, res) => {
-// 	const { category, name, description, hsncode, packages, requiredDocuments } =
-// 		req.body;
-
-// 	try {
-// 		const newService = new Service({
-// 			category,
-// 			name,
-// 			description,
-// 			hsncode,
-// 			packages,
-// 			requiredDocuments,
-// 		});
-// 		await newService.save();
-// 		res.status(201).json({ service: newService });
-// 	} catch (err) {
-// 		res.status(500).json({ message: "Error creating service" });
-// 	}
-// };
-
-// const updateService = async (req, res) => {
-// 	const { serviceId } = req.params;
-// 	const {
-// 		category,
-// 		name,
-// 		description,
-// 		actualPrice,
-// 		salePrice,
-// 		hsncode,
-// 		processingDays,
-// 		requiredDocuments,
-// 	} = req.body;
-
-// 	try {
-// 		// Find the service
-// 		const service = await Service.findById(serviceId);
-// 		if (!service) {
-// 			return res.status(404).json({ message: "Service not found" });
-// 		}
-
-// 		// Calculate the difference in processing days
-// 		const daysDifference = processingDays - (service.processingDays || 0);
-
-// 		// Update the service template
-// 		const updatedService = await Service.findByIdAndUpdate(
-// 			serviceId,
-// 			{
-// 				category,
-// 				name,
-// 				description,
-// 				actualPrice,
-// 				salePrice,
-// 				hsncode,
-// 				processingDays,
-// 				requiredDocuments,
-// 			},
-// 			{ new: true }
-// 		);
-
-// 		// If processing days have changed, update all active user services
-// 		if (daysDifference !== 0) {
-// 			const users = await User.find({ "services.serviceId": serviceId });
-
-// 			for (const user of users) {
-// 				const serviceIndex = user.services.findIndex(
-// 					(s) => s.serviceId.toString() === serviceId
-// 				);
-
-// 				if (
-// 					serviceIndex !== -1 &&
-// 					user.services[serviceIndex].documents &&
-// 					user.services[serviceIndex].documents.length > 0
-// 				) {
-// 					// Update the due date
-// 					const currentDueDate = new Date(user.services[serviceIndex].dueDate);
-// 					currentDueDate.setDate(currentDueDate.getDate() + daysDifference);
-
-// 					user.services[serviceIndex].dueDate = currentDueDate;
-// 					user.services[serviceIndex].processingDays = processingDays;
-
-// 					await user.save();
-// 				}
-// 			}
-// 		}
-
-// 		res.json({
-// 			message: "Service updated successfully",
-// 			service: updatedService,
-// 		});
-// 	} catch (err) {
-// 		console.error("Error updating service:", err);
-// 		res.status(500).json({
-// 			message: "Error updating service",
-// 			error: err.message,
-// 		});
-// 	}
-// };
-
-// const updateService = async (req, res) => {
-// 	const { serviceId } = req.params;
-// 	const { category, name, description, hsncode, packages, requiredDocuments } =
-// 		req.body;
-
-// 	try {
-// 		const service = await Service.findById(serviceId);
-// 		if (!service) {
-// 			return res.status(404).json({ message: "Service not found" });
-// 		}
-
-// 		// Update the service
-// 		const updatedService = await Service.findByIdAndUpdate(
-// 			serviceId,
-// 			{
-// 				category,
-// 				name,
-// 				description,
-// 				hsncode,
-// 				packages,
-// 				requiredDocuments,
-// 			},
-// 			{ new: true }
-// 		);
-
-// 		// Update processing days for active services if changed
-// 		const defaultPackage = packages[0];
-// 		if (
-// 			defaultPackage &&
-// 			defaultPackage.processingDays !== service.packages[0]?.processingDays
-// 		) {
-// 			const daysDifference =
-// 				defaultPackage.processingDays -
-// 				(service.packages[0]?.processingDays || 0);
-
-// 			const users = await User.find({ "services.serviceId": serviceId });
-// 			for (const user of users) {
-// 				const serviceIndex = user.services.findIndex(
-// 					(s) => s.serviceId.toString() === serviceId
-// 				);
-
-// 				if (
-// 					serviceIndex !== -1 &&
-// 					user.services[serviceIndex].documents?.length > 0
-// 				) {
-// 					const currentDueDate = new Date(user.services[serviceIndex].dueDate);
-// 					currentDueDate.setDate(currentDueDate.getDate() + daysDifference);
-
-// 					user.services[serviceIndex].dueDate = currentDueDate;
-// 					user.services[serviceIndex].processingDays =
-// 						defaultPackage.processingDays;
-
-// 					await user.save();
-// 				}
-// 			}
-// 		}
-
-// 		res.json({
-// 			message: "Service updated successfully",
-// 			service: updatedService,
-// 		});
-// 	} catch (err) {
-// 		console.error("Error updating service:", err);
-// 		res.status(500).json({
-// 			message: "Error updating service",
-// 			error: err.message,
-// 		});
-// 	}
-// };
 
 const updateService = async (req, res) => {
 	const { serviceId } = req.params;
@@ -831,7 +864,7 @@ const createEmployee = async (req, res) => {
 		name,
 		email,
 		role,
-		serviceId,
+		services, // Array of service IDs
 		username,
 		password,
 		Lminus1code,
@@ -843,7 +876,9 @@ const createEmployee = async (req, res) => {
 			!name ||
 			!email ||
 			!role ||
-			!serviceId ||
+			!services ||
+			!Array.isArray(services) ||
+			services.length === 0 ||
 			!username ||
 			!password ||
 			!Lminus1code
@@ -869,7 +904,7 @@ const createEmployee = async (req, res) => {
 			name,
 			email,
 			role,
-			serviceId,
+			servicesHandled: services, // Store the array of service IDs
 			username,
 			passwordHash: hashedPassword,
 			salt,
@@ -881,8 +916,15 @@ const createEmployee = async (req, res) => {
 
 		await newEmployee.save();
 
-		// Assign any existing unassigned customers for this service
-		const assignments = await assignUnassignedCustomers(serviceId, newEmployee);
+		// Assign any existing unassigned customers for these services
+		let allAssignments = [];
+		for (const serviceId of services) {
+			const assignments = await assignUnassignedCustomers(
+				serviceId,
+				newEmployee
+			);
+			allAssignments = [...allAssignments, ...assignments];
+		}
 
 		await sendEmail(
 			email,
@@ -892,7 +934,7 @@ const createEmployee = async (req, res) => {
 
 		res.status(201).json({
 			employee: newEmployee,
-			customerAssignments: assignments,
+			customerAssignments: allAssignments,
 		});
 	} catch (err) {
 		console.error("Error creating employee:", err);
@@ -900,6 +942,7 @@ const createEmployee = async (req, res) => {
 	}
 };
 
+//promote
 const promoteToManager = async (req, res) => {
 	try {
 		const { employeeId } = req.body;
@@ -1445,6 +1488,7 @@ const updateCustomerInfo = async (req, res) => {
 			"institute",
 			"completionDate",
 			"bankDetails",
+			"reasonForInactive",
 		];
 
 		// Filter out any fields that aren't in allowedFields
@@ -1512,4 +1556,6 @@ module.exports = {
 	updateCustomerInfo,
 
 	promoteToManager,
+
+	assignOrderToEmployee,
 };

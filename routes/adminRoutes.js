@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../middlewares/authMiddleware");
 const User = require("../models/userModel");
+const Service = require("../models/serviceModel");
 
 const {
 	adminLogin,
@@ -29,6 +30,7 @@ const {
 	assignServiceToFlexiCustomer,
 	updateCustomerInfo,
 	promoteToManager,
+	assignOrderToEmployee,
 } = require("../controllers/adminController");
 
 // Admin login
@@ -85,5 +87,83 @@ router.post("/approve-withdrawal", authMiddleware, approveWithdrawal);
 router.post("/assign-service", authMiddleware, assignServiceToFlexiCustomer);
 
 router.post("/promote-to-manager", authMiddleware, promoteToManager);
+router.post("/assign-order", authMiddleware, assignOrderToEmployee);
+
+// router.post("/users/:userId/assign-service", async (req, res) => {
+// 	const { userId } = req.params;
+// 	const { serviceId } = req.body;
+
+// 	try {
+// 		const user = await User.findById(userId);
+// 		if (!user) return res.status(404).json({ message: "User not found" });
+
+// 		const service = await Service.findById(serviceId); // Assuming a Service model exists
+// 		if (!service) return res.status(404).json({ message: "Service not found" });
+
+// 		user.services.push({
+// 			serviceId,
+// 			name: service.name,
+// 			status: "In Process",
+// 			activated: true,
+// 			purchasedAt: new Date(),
+// 		});
+
+// 		await user.save();
+// 		res.status(200).json({ message: "Service assigned successfully" });
+// 	} catch (error) {
+// 		res
+// 			.status(500)
+// 			.json({ message: "Error assigning service", error: error.message });
+// 	}
+// });
+
+router.post("/users/:userId/assign-service", async (req, res) => {
+	const { userId } = req.params;
+	const { serviceId } = req.body;
+
+	try {
+		const user = await User.findById(userId);
+		if (!user) return res.status(404).json({ message: "User not found" });
+
+		const service = await Service.findById(serviceId);
+		if (!service) return res.status(404).json({ message: "Service not found" });
+
+		// Generate a unique orderId
+		const orderId = generateOrderId(userId);
+
+		user.services.push({
+			serviceId,
+			orderId, // Add the generated orderId
+			name: service.name,
+			status: "In Process",
+			activated: true,
+			purchasedAt: new Date(),
+			dueDate: service.dueDate, // Include dueDate from service
+			requiredDocuments: service.requiredDocuments || [], // Include required documents
+			documents: [], // Initialize empty documents array
+		});
+
+		await user.save();
+		res.status(200).json({
+			message: "Service assigned successfully",
+			orderId, // Return the orderId for confirmation
+		});
+	} catch (error) {
+		res.status(500).json({
+			message: "Error assigning service",
+			error: error.message,
+		});
+	}
+});
+
+// Add generateOrderId function to the file (or import it from customerController)
+const generateOrderId = (userId) => {
+	const timestamp = Date.now();
+	const shortTimestamp = timestamp.toString().slice(-4);
+	const randomDigits = Math.floor(Math.random() * 1000)
+		.toString()
+		.padStart(3, "0");
+	return `ORDER${userId}-${shortTimestamp}${randomDigits}`;
+};
 
 module.exports = router;

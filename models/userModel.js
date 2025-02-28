@@ -117,6 +117,7 @@ const customerFields = {
 	completionDate: { type: Date },
 	activeFrom: { type: Date },
 	activeTill: { type: Date },
+	reasonForInactive: { type: String },
 	customerCreateDate: { type: Date },
 };
 
@@ -133,18 +134,17 @@ const employeeFields = {
 	phoneNumber: { type: Number },
 	dateOfJoining: { type: Date },
 	designation: { type: String },
-	// servicesHandled: [
-	// 	{
-	// 		serviceId: { type: String, required: true },
-	// 		serviceName: { type: String, required: true },
-	// 		category: { type: String, required: true },
-	// 	},
-	// ],
+	servicesHandled: [
+		{
+			serviceId: { type: String, required: true },
+			serviceName: { type: String, required: true },
+			category: { type: String, required: true },
+		},
+	],
 	employeeStatus: { type: String },
 	reasonForLeaving: { type: String },
 	currentOrgRelieveDate: { type: Date },
 
-	// Existing fields from before
 	departmentCode: { type: String },
 	departmentName: { type: String },
 	positionCode: { type: String },
@@ -160,7 +160,7 @@ const employeeFields = {
 	state: { type: String },
 	country: { type: String },
 	postalCode: { type: Number },
-
+	institute: { type: String },
 	// Additional new fields
 	previousOrganization: { type: String },
 	previousOrgFromDate: { type: Date },
@@ -203,7 +203,7 @@ const managerFields = {
 	state: { type: String },
 	country: { type: String },
 	postalCode: { type: Number },
-
+	institute: { type: String },
 	previousOrganization: { type: String },
 	previousOrgFromDate: { type: Date },
 	previousOrgToDate: { type: Date },

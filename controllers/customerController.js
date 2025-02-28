@@ -23,23 +23,9 @@ const transporter = nodemailer.createTransport({
 	service: "gmail",
 	auth: {
 		user: process.env.EMAIL_USER,
-		pass: process.env.EMAIL_PASS,
+		pass: process.env.EMAIL_PASS, 
 	},
 });
-
-// const sendEmail = async (to, subject, text) => {
-// 	try {
-// 		await transporter.sendMail({
-// 			from: process.env.EMAIL_USER,
-// 			to,
-// 			subject,
-// 			text,
-// 		});
-// 		console.log(`Email sent to ${to}`);
-// 	} catch (error) {
-// 		console.error(`Failed to send email to ${to}:`, error);
-// 	}
-// };
 
 const sendEmail = async (to, subject, text, htmlContent = null) => {
 	try {
@@ -163,10 +149,98 @@ function generateReferralCode() {
 	return crypto.randomBytes(3).toString("hex").toUpperCase(); // Generate a 6-character alphanumeric code
 }
 
+// const registerCustomer = async (req, res) => {
+// 	try {
+// 		const { name, lastname, username, email, mobile, password, referralCode } =
+// 			req.body;
+
+// 		// Generate a referral code for the new user
+// 		const newReferralCode = generateReferralCode();
+
+// 		if (!name || !email || !username || !password) {
+// 			return res.status(400).json({ message: "All fields are required" });
+// 		}
+
+// 		// Check if a user with the same email or username already exists
+// 		const existingUser = await User.findOne({ email });
+// 		if (existingUser) {
+// 			return res
+// 				.status(400)
+// 				.json({ message: "User with this email already exists" });
+// 		}
+
+// 		const salt = crypto.randomBytes(16).toString("hex");
+// 		const hashedPassword = hashPassword(password, salt);
+
+// 		// Create a new user
+// 		const newUser = new User({
+// 			name,
+// 			lastname,
+// 			email,
+// 			mobile,
+// 			username,
+// 			passwordHash: hashedPassword,
+// 			salt,
+// 			role: "customer",
+// 			isProfileComplete: false,
+// 			serviceStatus: "active",
+// 			referralCode: newReferralCode,
+// 			isActive: true,
+// 		});
+
+// 		await newUser.save();
+
+// 		// Create wallet for the new user
+// 		const newWallet = new Wallet({
+// 			userId: newUser._id,
+// 			referralCode: newUser.referralCode,
+// 			referredBy: referralCode || null,
+// 			balance: 0,
+// 			referralEarnings: 0,
+// 			transactions: [],
+// 			withdrawalRequests: [],
+// 		});
+// 		await newWallet.save();
+
+// 		// Handle referral if referral code is provided
+// 		if (referralCode) {
+// 			await handleReferral(referralCode, newUser._id);
+// 		}
+
+// 		// Send welcome email
+// 		await sendEmail(
+// 			email,
+// 			"Welcome to Our Service",
+// 			`Hello ${name},\nThank you for registering with us! Your referral code is: ${newReferralCode}`
+// 		);
+
+// 		res.status(200).json({
+// 			message: "Registration successful!",
+// 			userId: newUser._id,
+// 			referralCode: newReferralCode,
+// 			wallet: {
+// 				balance: newWallet.balance,
+// 				referralCode: newWallet.referralCode,
+// 			},
+// 		});
+// 	} catch (error) {
+// 		console.error(error);
+// 		res.status(500).json({ message: "Error registering user" });
+// 	}
+// };
+
 const registerCustomer = async (req, res) => {
 	try {
-		const { name, lastname, username, email, mobile, password, referralCode } =
-			req.body;
+		const {
+			name,
+			lastname,
+			username,
+			email,
+			mobile,
+			password,
+			referralCode,
+			serviceId,
+		} = req.body;
 
 		// Generate a referral code for the new user
 		const newReferralCode = generateReferralCode();
@@ -202,6 +276,26 @@ const registerCustomer = async (req, res) => {
 			isActive: true,
 		});
 
+		// If serviceId is provided, add it to the user's services
+		if (serviceId) {
+			// Get service details to check dueDate
+			const service = await Service.findById(serviceId);
+			if (service) {
+				// Generate a custom order ID
+				const orderId = generateOrderId(newUser._id);
+
+				newUser.services.push({
+					serviceId,
+					orderId,
+					activated: true,
+					purchasedAt: new Date(),
+					dueDate: service.dueDate,
+					requiredDocuments: service.requiredDocuments,
+					documents: [],
+				});
+			}
+		}
+
 		await newUser.save();
 
 		// Create wallet for the new user
@@ -221,11 +315,27 @@ const registerCustomer = async (req, res) => {
 			await handleReferral(referralCode, newUser._id);
 		}
 
+		// Assign employee if serviceId is provided
+		let assignmentResult = { success: false };
+		if (serviceId && newUser.services.length > 0) {
+			// Import the customerAssignment utility if needed
+
+			// Attempt to assign an employee to the customer for this service
+			assignmentResult = await handleCustomerEmployeeAssignment(
+				newUser,
+				serviceId
+			);
+		}
+
 		// Send welcome email
 		await sendEmail(
 			email,
 			"Welcome to Our Service",
-			`Hello ${name},\nThank you for registering with us! Your referral code is: ${newReferralCode}`
+			`Hello ${name},\nThank you for registering with us! Your referral code is: ${newReferralCode}${
+				assignmentResult.success
+					? `\n\nAn employee has been assigned to assist you with your service: ${assignmentResult.employee.name}`
+					: ""
+			}`
 		);
 
 		res.status(200).json({
@@ -236,6 +346,7 @@ const registerCustomer = async (req, res) => {
 				balance: newWallet.balance,
 				referralCode: newWallet.referralCode,
 			},
+			employeeAssigned: assignmentResult.success,
 		});
 	} catch (error) {
 		console.error(error);
@@ -243,64 +354,120 @@ const registerCustomer = async (req, res) => {
 	}
 };
 
-// controllers/customerController.js
+// const registerFlexiCustomer = async (req, res) => {
+// 	try {
+// 		const {
+// 			name,
+// 			email,
+// 			mobile,
 
-// Backend: controllers/customerController.js
-// In your customerController.js
+// 			password,
+// 			leadSource,
+// 		} = req.body;
+
+// 		// Generate unique ID for the user
+// 		const userId = `CUST${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+// 		// Generate salt and hash password
+// 		const salt = crypto.randomBytes(16).toString("hex");
+// 		const hashedPassword = hashPassword(password, salt);
+
+// 		// Create new user with serviceInterest
+// 		const newUser = new User({
+// 			_id: userId,
+// 			name,
+// 			email,
+// 			mobile,
+
+// 			passwordHash: hashedPassword,
+// 			salt,
+// 			role: "customer",
+// 			leadSource: leadSource || "flexfunneli",
+// 			isActive: true, // Activate the user immediately
+// 			username: email, // Use email as username
+// 		});
+
+// 		await newUser.save();
+
+// 		// Send welcome email
+// 		await sendEmail(
+// 			email,
+// 			"Welcome to Our Service",
+// 			`Dear ${name},\n\nThank you for registering. Your account has been created successfully. Our team will review and assign your service within 24 hours.\n\nBest regards,\nTeam`
+// 		);
+
+// 		res.status(201).json({
+// 			message: "Registration successful",
+// 			email: newUser.email,
+// 			userId: newUser._id,
+// 		});
+// 	} catch (error) {
+// 		console.error("Registration error:", error);
+// 		res.status(500).json({
+// 			message: "Registration failed",
+// 			error: error.message,
+// 		});
+// 	}
+// };
+
 const registerFlexiCustomer = async (req, res) => {
 	try {
-		const {
-			name,
-			email,
-			mobile,
-			address,
-			city,
-			state,
-			pincode,
-			serviceInterest,
-			password,
-			leadSource,
-		} = req.body;
+		const { name, email, mobile, password, leadSource } = req.body;
 
 		// Generate unique ID for the user
 		const userId = `CUST${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+		// Generate a referral code for the new user
+		const newReferralCode = generateReferralCode();
 
 		// Generate salt and hash password
 		const salt = crypto.randomBytes(16).toString("hex");
 		const hashedPassword = hashPassword(password, salt);
 
-		// Create new user with serviceInterest
+		// Create new user
 		const newUser = new User({
 			_id: userId,
 			name,
 			email,
 			mobile,
-			address,
-			city,
-			state,
-			pincode,
-			serviceInterest, // This should now be saved correctly
 			passwordHash: hashedPassword,
 			salt,
 			role: "customer",
-			leadSource: leadSource || "flexfunneli",
-			isActive: true, // Activate the user immediately
+			leadSource: leadSource || "flexifunnel", // Corrected typo from "flexfunneli"
+			isActive: true,
 			username: email, // Use email as username
+			referralCode: newReferralCode, // Add referral code
 		});
 
 		await newUser.save();
+
+		// Initialize wallet for the Flexi Funnel customer
+		const newWallet = new Wallet({
+			userId: newUser._id,
+			referralCode: newUser.referralCode,
+			balance: 0,
+			referralEarnings: 0,
+			transactions: [],
+			withdrawalRequests: [],
+		});
+		await newWallet.save();
 
 		// Send welcome email
 		await sendEmail(
 			email,
 			"Welcome to Our Service",
-			`Dear ${name},\n\nThank you for registering. Your account has been created successfully. Our team will review and assign your requested service within 24 hours.\n\nBest regards,\nTeam`
+			`Dear ${name},\n\nThank you for registering. Your account has been created successfully. Your referral code is: ${newReferralCode}. Our team will review and assign your service within 24 hours.\n\nBest regards,\nTeam`
 		);
 
 		res.status(201).json({
 			message: "Registration successful",
 			email: newUser.email,
 			userId: newUser._id,
+			referralCode: newReferralCode,
+			wallet: {
+				balance: newWallet.balance,
+				referralCode: newWallet.referralCode,
+			},
 		});
 	} catch (error) {
 		console.error("Registration error:", error);
@@ -310,6 +477,11 @@ const registerFlexiCustomer = async (req, res) => {
 		});
 	}
 };
+
+// Ensure generateReferralCode is available (or import it)
+function generateReferralCode() {
+	return crypto.randomBytes(3).toString("hex").toUpperCase(); // 6-character code
+}
 
 const updateCustomerProfile = async (req, res) => {
 	const { userId } = req.user;
@@ -363,9 +535,14 @@ const updateCustomerProfile = async (req, res) => {
 };
 
 // Function to generate a custom order ID based on userId and timestamp
+
 const generateOrderId = (userId) => {
-	const timestamp = Date.now(); // Get the current timestamp
-	return `ORDER${userId}`; // Combine userId and timestamp to create a unique order ID
+	const timestamp = Date.now();
+	const shortTimestamp = timestamp.toString().slice(-4);
+	const randomDigits = Math.floor(Math.random() * 1000)
+		.toString()
+		.padStart(3, "0");
+	return `ORDER${userId}-${shortTimestamp}${randomDigits}`;
 };
 
 const handlePaymentSuccess = async (req, res) => {

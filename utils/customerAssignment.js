@@ -33,7 +33,11 @@ const handleCustomerEmployeeAssignment = async (
 	try {
 		// If no employee provided, try to find one for this service
 		if (!employee) {
-			employee = await User.findOne({ role: "employee", serviceId });
+			employee = await User.findOne({
+				role: "employee",
+				servicesHandled: { $in: [serviceId] }, // Look for serviceId in the servicesHandled array
+				isActive: true, // Make sure the employee is active
+			});
 		}
 
 		if (!employee) {
