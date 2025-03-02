@@ -51,114 +51,59 @@ const employeeLogin = async (req, res) => {
 };
 
 // const getEmployeeDash = async (req, res) => {
-// 	const employeeId = req.user._id; // Get employee ID from JWT token
-
 // 	try {
-// 		// Find employee and populate relevant data
-// 		const employee = await User.findById(employeeId).select([
-// 			"_id",
-// 			"name",
-// 			"email",
-// 			"username",
-// 			"role",
-// 			"isActive",
-// 			"assignedCustomers",
-// 			"isProfileComplete",
-// 			"L1EmpCode",
-// 			"L1Name",
-// 			"L2Empcode",
-// 			"createdAt",
-// 			"updatedAt",
-// 			"downloadAccess",
-// 			"serviceId",
-// 			"phoneNumber",
-// 		]);
+// 		const employeeId = req.user._id; // Assuming this comes from auth middleware
 
-// 		if (!employee || employee.role !== "employee") {
-// 			return res.status(404).json({ message: "Employee not found" });
-// 		}
+// 		// Fetch complete employee information with populated references
+// 		const employeeInfo = await User.findById(employeeId)
+// 			.populate({
+// 				path: "assignedCustomers",
+// 				select: "-passwordHash -salt", // Exclude sensitive information
+// 			})
+// 			.populate({
+// 				path: "serviceId",
+// 				select: "name description price", // Add relevant service fields
+// 			})
+// 			.populate({
+// 				path: "L1EmpCode",
+// 				select: "name email", // Add relevant manager fields
+// 			})
+// 			.populate("services")
+// 			.populate("paymentHistory")
+// 			.lean();
 
-// 		// Get assigned customers
-// 		const assignedCustomers = await User.find({
-// 			_id: { $in: employee.assignedCustomers },
-// 			role: "customer",
-// 		}).select("services");
+// 		// Fetch metrics (customize based on your requirements)
+// 		const metrics = {
+// 			totalCustomers: employeeInfo.assignedCustomers.length,
+// 			activeCustomers: employeeInfo.assignedCustomers.filter((c) => c.isActive)
+// 				.length,
+// 			completedServices: employeeInfo.services.filter(
+// 				(s) => s.status === "completed"
+// 			).length,
+// 			// Add other relevant metrics
+// 		};
 
-// 		// Calculate assigned customer count
-// 		const customerCount = assignedCustomers?.length;
-
-// 		// Calculate total queries and their status distribution
-// 		// Calculate total queries and status distribution
-// 		let totalQueries = 0;
-// 		let queryStats = { pending: 0, responded: 0, resolved: 0 };
-// 		let serviceDueDates = [];
-
-// 		assignedCustomers.forEach((customer) => {
-// 			customer.services.forEach((service) => {
-// 				if (service.queries) {
-// 					service.queries.forEach((query) => {
-// 						totalQueries++;
-// 						queryStats[query.status]++;
-// 					});
-// 				}
-
-// 				// Add due date for matching services
-// 				if (service.dueDate) {
-// 					serviceDueDates.push({
-// 						customerId: customer._id,
-// 						serviceId: service.serviceId,
-// 						dueDate: service.dueDate,
-// 					});
-// 				}
-// 			});
-// 		});
-
-// 		// Get active services count for assigned customers
-// 		const activeServicesCount = assignedCustomers.reduce((total, customer) => {
-// 			return (
-// 				total + customer.services.filter((service) => service.activated).length
-// 			);
-// 		}, 0);
-
-// 		// Create dashboard response object
-// 		const dashboardData = {
-// 			employeeInfo: {
-// 				id: employee._id,
-// 				name: employee.name,
-// 				email: employee.email,
-// 				username: employee.username,
-// 				isActive: employee.isActive,
-// 				isProfileComplete: employee.isProfileComplete,
-// 				L1EmpCode: employee.L1EmpCode,
-// 				L1Name: employee.L1Name,
-// 				L2Empcode: employee.L2Empcode,
-// 				joinedAt: employee.createdAt,
-// 				downloadAccess: employee.downloadAccess,
-// 				serviceId: employee.serviceId,
-// 				phoneNumber: employee.phoneNumber,
-// 			},
-// 			metrics: {
-// 				totalAssignedCustomers: customerCount,
-// 				activeServicesCount,
-// 				totalQueries,
-// 				queryDistribution: queryStats,
-// 				serviceDueDates,
-// 			},
-// 			status: {
-// 				accountStatus: employee.isActive ? "Active" : "Inactive",
-// 				profileStatus: employee.isProfileComplete ? "Complete" : "Incomplete",
-// 			},
+// 		// Fetch status information
+// 		const status = {
+// 			isActive: employeeInfo.isActive,
+// 			isProfileComplete: employeeInfo.isProfileComplete,
+// 			lastLogin: employeeInfo.lastLogin,
+// 			// Add other status fields
 // 		};
 
 // 		res.status(200).json({
 // 			success: true,
-// 			data: dashboardData,
+// 			data: {
+// 				employeeInfo,
+// 				metrics,
+// 				status,
+// 			},
 // 		});
 // 	} catch (error) {
-// 		console.error("Error fetching employee dashboard:", error);
+// 		console.error("Employee Dashboard Error:", error);
 // 		res.status(500).json({
 // 			success: false,
-// 			message: "Error fetching employee dashboard data",
+// 			message: "Error fetching employee dashboard",
 // 			error: error.message,
 // 		});
 // 	}
@@ -166,35 +111,65 @@ const employeeLogin = async (req, res) => {
 
 const getEmployeeDash = async (req, res) => {
 	try {
-		const employeeId = req.user._id; // Assuming this comes from auth middleware
+		const employeeId = req.user._id;
 
 		// Fetch complete employee information with populated references
 		const employeeInfo = await User.findById(employeeId)
 			.populate({
 				path: "assignedCustomers",
-				select: "-passwordHash -salt", // Exclude sensitive information
+				select: "-passwordHash -salt",
+				populate: {
+					path: "services",
+					match: { employeeId: employeeId }, // Only get services assigned to this employee
+				},
 			})
 			.populate({
 				path: "serviceId",
-				select: "name description price", // Add relevant service fields
+				select: "name description price",
 			})
 			.populate({
 				path: "L1EmpCode",
-				select: "name email", // Add relevant manager fields
+				select: "name email",
 			})
 			.populate("services")
 			.populate("paymentHistory")
 			.lean();
 
-		// Fetch metrics (customize based on your requirements)
+		// Calculate completed services from assigned customers
+		let completedServices = 0;
+		const customerServices = employeeInfo.assignedCustomers.reduce(
+			(acc, customer) => {
+				if (customer.services && Array.isArray(customer.services)) {
+					const customerCompleted = customer.services.filter(
+						(s) =>
+							s.status === "completed" &&
+							s.employeeId.toString() === employeeId.toString()
+					).length;
+					completedServices += customerCompleted;
+					return [
+						...acc,
+						...customer.services.filter(
+							(s) => s.employeeId.toString() === employeeId.toString()
+						),
+					];
+				}
+				return acc;
+			},
+			[]
+		);
+
+		// Combine employee's own services with customer services
+		const allServices = [...(employeeInfo.services || []), ...customerServices];
+
+		// Fetch metrics
 		const metrics = {
 			totalCustomers: employeeInfo.assignedCustomers.length,
 			activeCustomers: employeeInfo.assignedCustomers.filter((c) => c.isActive)
 				.length,
-			completedServices: employeeInfo.services.filter(
-				(s) => s.status === "completed"
-			).length,
-			// Add other relevant metrics
+			completedServices:
+				completedServices +
+				(employeeInfo.services || []).filter((s) => s.status === "completed")
+					.length,
 		};
 
 		// Fetch status information
@@ -202,13 +177,15 @@ const getEmployeeDash = async (req, res) => {
 			isActive: employeeInfo.isActive,
 			isProfileComplete: employeeInfo.isProfileComplete,
 			lastLogin: employeeInfo.lastLogin,
-			// Add other status fields
 		};
 
 		res.status(200).json({
 			success: true,
 			data: {
-				employeeInfo,
+				employeeInfo: {
+					...employeeInfo,
+					allServices, // Include all relevant services in the response
+				},
 				metrics,
 				status,
 			},
@@ -219,6 +196,92 @@ const getEmployeeDash = async (req, res) => {
 			success: false,
 			message: "Error fetching employee dashboard",
 			error: error.message,
+		});
+	}
+};
+
+const updateServiceStatus = async (req, res) => {
+	const { serviceId } = req.params;
+	const { status, customerId } = req.body;
+	const employeeId = req.user._id;
+
+	try {
+		// Validate the status input
+		if (!["completed", "in-process", "rejected"].includes(status)) {
+			return res.status(400).json({ message: "Invalid status" });
+		}
+
+		// Start a MongoDB session for transaction
+		const session = await User.startSession();
+		session.startTransaction();
+
+		try {
+			// Update customer's service
+			const customerUpdate = await User.findOneAndUpdate(
+				{
+					_id: customerId,
+					"services.serviceId": serviceId,
+					"services.employeeId": employeeId,
+				},
+				{
+					$set: { "services.$.status": status },
+				},
+				{ new: true }
+			);
+
+			if (!customerUpdate) {
+				throw new Error("Customer or service not found");
+			}
+
+			// Update employee's service (if it exists in their services array)
+			const employeeUpdate = await User.findOneAndUpdate(
+				{
+					_id: employeeId,
+					"services.serviceId": serviceId,
+				},
+				{
+					$set: { "services.$.status": status },
+				},
+				{ new: true }
+			);
+
+			// If service doesn't exist in employee's services array, add it
+			if (!employeeUpdate) {
+				await User.findByIdAndUpdate(employeeId, {
+					$push: {
+						services: {
+							serviceId,
+							status,
+							customerId,
+							employeeId,
+						},
+					},
+				});
+			}
+
+			// Commit the transaction
+			await session.commitTransaction();
+
+			// Get the updated service from customer
+			const updatedService = customerUpdate.services.find(
+				(service) => service.serviceId.toString() === serviceId.toString()
+			);
+
+			res.json({
+				message: `Service status updated to ${status}`,
+				service: updatedService,
+			});
+		} catch (error) {
+			await session.abortTransaction();
+			throw error;
+		} finally {
+			session.endSession();
+		}
+	} catch (err) {
+		console.error("Error updating service status:", err);
+		res.status(500).json({
+			message: "Error updating service status",
+			error: err.message,
 		});
 	}
 };
@@ -295,41 +358,41 @@ const getAssignedCustomers = async (req, res) => {
 	}
 };
 
-const updateServiceStatus = async (req, res) => {
-	const { serviceId } = req.params; // serviceId of the service to update
-	const { status } = req.body;
-	const { customerId } = req.body; // Add customerId from the body
+// const updateServiceStatus = async (req, res) => {
+// 	const { serviceId } = req.params; // serviceId of the service to update
+// 	const { status } = req.body;
+// 	const { customerId } = req.body; // Add customerId from the body
 
-	try {
-		// Validate the status input
-		if (!["completed", "in-process", "rejected"].includes(status)) {
-			return res.status(400).json({ message: "Invalid status" });
-		}
+// 	try {
+// 		// Validate the status input
+// 		if (!["completed", "in-process", "rejected"].includes(status)) {
+// 			return res.status(400).json({ message: "Invalid status" });
+// 		}
 
-		// Find and update the service within the user's services array for a specific customer
-		const customer = await User.findOneAndUpdate(
-			{ _id: customerId, "services.serviceId": serviceId }, // Match by customerId and serviceId
-			{ $set: { "services.$.status": status } }, // Update the status of the specific service in the array
-			{ new: true }
-		);
+// 		// Find and update the service within the user's services array for a specific customer
+// 		const customer = await User.findOneAndUpdate(
+// 			{ _id: customerId, "services.serviceId": serviceId }, // Match by customerId and serviceId
+// 			{ $set: { "services.$.status": status } }, // Update the status of the specific service in the array
+// 			{ new: true }
+// 		);
 
-		if (!customer) {
-			return res.status(404).json({ message: "Customer or service not found" });
-		}
+// 		if (!customer) {
+// 			return res.status(404).json({ message: "Customer or service not found" });
+// 		}
 
-		// Return the updated service status
-		const updatedService = customer.services.find(
-			(service) => service.serviceId === serviceId
-		);
-		res.json({
-			message: `Service status updated to ${status}`,
-			service: updatedService,
-		});
-	} catch (err) {
-		console.error("Error updating service status:", err);
-		res.status(500).json({ message: "Error updating service status" });
-	}
-};
+// 		// Return the updated service status
+// 		const updatedService = customer.services.find(
+// 			(service) => service.serviceId === serviceId
+// 		);
+// 		res.json({
+// 			message: `Service status updated to ${status}`,
+// 			service: updatedService,
+// 		});
+// 	} catch (err) {
+// 		console.error("Error updating service status:", err);
+// 		res.status(500).json({ message: "Error updating service status" });
+// 	}
+// };
 
 const getQueriesForEmployee = async (req, res) => {
 	try {
