@@ -43,6 +43,8 @@ const customerServiceSchema = new mongoose.Schema({
 	employeeId: { type: String, ref: "User", index: true },
 	status: { type: String, default: "In Process" },
 	dueDate: { type: Date },
+	packageName: { type: String },  // Store which package was selected
+	processingDays: { type: Number, default: 7 }, // Store the processing days for this service
 	documents: [documentSchema],
 	queries: [querySchema],
 	feedback: [

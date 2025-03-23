@@ -31,6 +31,14 @@ const {
 	updateCustomerInfo,
 	promoteToManager,
 	assignOrderToEmployee,
+	toggleServiceActivation,
+
+	// Add new lead management functions
+	getAllLeads,
+	assignLeadToEmployee,
+	acceptLead,
+	declineLead,
+	convertLeadToOrder,
 } = require("../controllers/adminController");
 
 // Admin login
@@ -55,10 +63,10 @@ router.post("/createUser", authMiddleware, createUser);
 router.put("/services/:serviceId", authMiddleware, updateService);
 
 router.delete("/services/:serviceId", authMiddleware, deleteService);
+router.put("/services/:serviceId/toggle-activation", authMiddleware, toggleServiceActivation);
 router.post("/manager", authMiddleware, createManager);
 router.post("/assign-employee", authMiddleware, assignEmployeeToManager);
 router.post("/update-download-access", updateDownloadAccess);
-// router.put("/customers/:userId", updateCustomerInfo);
 
 // In your Express routes
 router.patch("/users/:userId", async (req, res) => {
@@ -165,5 +173,12 @@ const generateOrderId = (userId) => {
 		.padStart(3, "0");
 	return `ORDER${userId}-${shortTimestamp}${randomDigits}`;
 };
+
+// Lead management routes
+router.get("/leads", authMiddleware, getAllLeads);
+router.post("/leads/assign", authMiddleware, assignLeadToEmployee);
+router.put("/leads/:leadId/accept", authMiddleware, acceptLead);
+router.put("/leads/:leadId/decline", authMiddleware, declineLead);
+router.post("/leads/convert", authMiddleware, convertLeadToOrder);
 
 module.exports = router;

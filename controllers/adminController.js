@@ -10,6 +10,7 @@ const Message = require("../models/messageModel");
 const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
 const path = require("path");
+const Lead = require('../models/leadModel');
 
 const {
 	handleCustomerEmployeeAssignment,
@@ -184,10 +185,10 @@ const getAllUsers = async (req, res) => {
 
 const getAllServices = async (req, res) => {
 	try {
-		// Fetch all fields, including createdAt
+		// Fetch all fields, including createdAt and isActive
 		const services = await Service.find(
 			{},
-			"serviceId category name description actualPrice salePrice status hsncode createdAt"
+			"serviceId category name description actualPrice salePrice status hsncode createdAt isActive processingDays requiredDocuments"
 		);
 		res.json({ services });
 	} catch (err) {
@@ -320,106 +321,6 @@ const getAllCustomerOrders = async (req, res) => {
 		});
 	}
 };
-
-// New admin controller function
-// const assignOrderToEmployee = async (req, res) => {
-// 	try {
-// 		const { orderId, employeeId } = req.body;
-
-// 		if (!orderId || !employeeId) {
-// 			return res.status(400).json({
-// 				success: false,
-// 				message: "Order ID and Employee ID are required",
-// 			});
-// 		}
-
-// 		// Find the customer with the given order ID
-// 		const customer = await User.findOne({
-// 			"services.orderId": orderId,
-// 			role: "customer",
-// 		});
-
-// 		if (!customer) {
-// 			return res.status(404).json({
-// 				success: false,
-// 				message: "Order not found",
-// 			});
-// 		}
-
-// 		// Find the employee
-// 		const employee = await User.findOne({
-// 			_id: employeeId,
-// 			role: "employee",
-// 		});
-
-// 		if (!employee) {
-// 			return res.status(404).json({
-// 				success: false,
-// 				message: "Employee not found",
-// 			});
-// 		}
-
-// 		// Find the service index in customer's services array
-// 		const serviceIndex = customer.services.findIndex(
-// 			(service) => service.orderId === orderId
-// 		);
-
-// 		if (serviceIndex === -1) {
-// 			return res.status(404).json({
-// 				success: false,
-// 				message: "Order not found in customer's services",
-// 			});
-// 		}
-
-// 		// Get the service ID
-// 		const serviceId = customer.services[serviceIndex].serviceId;
-
-// 		// Check if employee can handle this service
-// 		if (!employee.servicesHandled.includes(serviceId)) {
-// 			return res.status(400).json({
-// 				success: false,
-// 				message: "Employee does not handle this service type",
-// 			});
-// 		}
-
-// 		// Update the employee ID for the specific order
-// 		customer.services[serviceIndex].employeeId = employeeId;
-
-// 		// Add customer to employee's assignedCustomers if not already there
-// 		if (!employee.assignedCustomers.includes(customer._id)) {
-// 			employee.assignedCustomers.push(customer._id);
-// 		}
-
-// 		// Save both documents
-// 		await customer.save();
-// 		await employee.save();
-
-// 		// Send email notifications
-// 		await sendEmail(
-// 			customer.email,
-// 			"Employee Assigned to Your Order",
-// 			`Hello ${customer.name},\n\nWe've assigned ${employee.name} to handle your order #${orderId}. They will contact you shortly.`
-// 		);
-
-// 		await sendEmail(
-// 			employee.email,
-// 			"New Order Assignment",
-// 			`Hello ${employee.name},\n\nYou've been assigned to handle order #${orderId} for customer ${customer.name} (${customer.email}).`
-// 		);
-
-// 		res.status(200).json({
-// 			success: true,
-// 			message: "Order assigned to employee successfully",
-// 		});
-// 	} catch (error) {
-// 		console.error("Error assigning order to employee:", error);
-// 		res.status(500).json({
-// 			success: false,
-// 			message: "Error assigning order to employee",
-// 			error: error.message,
-// 		});
-// 	}
-// };
 
 const assignOrderToEmployee = async (req, res) => {
 	try {
@@ -586,7 +487,7 @@ const assignOrderToEmployee = async (req, res) => {
 const getDashboardData = async (req, res) => {
 	try {
 		// Get all services
-		const services = await Service.find({}); 
+		const services = await Service.find({});
 
 		// Get all users with populated service details and complete information
 		const users = await User.find({})
@@ -647,106 +548,162 @@ const createService = async (req, res) => {
 		category,
 		name,
 		description,
-		actualPrice,
-		salePrice,
 		hsncode,
-		processingDays,
+		currency,
+		packages,
 		requiredDocuments,
 	} = req.body;
 
 	try {
+		// Validate that we have all required fields
+		if (!category || !name || !description || !hsncode) {
+			return res.status(400).json({ message: "Missing required fields" });
+		}
+
+		// Validate packages
+		if (!packages || !Array.isArray(packages) || packages.length === 0) {
+			return res.status(400).json({ message: "At least one package is required" });
+		}
+
 		const newService = new Service({
 			category,
 			name,
 			description,
-			actualPrice,
-			salePrice,
 			hsncode,
-			processingDays,
-			requiredDocuments,
+			currency: currency || "INR",
+			packages,
+			requiredDocuments: requiredDocuments || [],
 		});
+
 		await newService.save();
 		res.status(201).json({ service: newService });
 	} catch (err) {
+		console.error("Error creating service:", err);
 		res.status(500).json({ message: "Error creating service" });
 	}
 };
 
 const updateService = async (req, res) => {
-	const { serviceId } = req.params;
-	const {
-		category,
-		name,
-		description,
-		actualPrice,
-		salePrice,
-		hsncode,
-		processingDays,
-		requiredDocuments,
-	} = req.body;
-
 	try {
+		const { serviceId } = req.params;
+		const {
+			category,
+			name,
+			description,
+			hsncode,
+			currency = "INR",
+			packages,
+			requiredDocuments,
+			extensionDays = 0,
+		} = req.body;
+
+		// Validation - basic fields
+		if (!category || !name || !description || !hsncode) {
+			return res.status(400).json({
+				message: "Required fields (category, name, description, hsncode) are missing",
+			});
+		}
+
 		// Find the service
 		const service = await Service.findById(serviceId);
 		if (!service) {
 			return res.status(404).json({ message: "Service not found" });
 		}
 
-		// Calculate the difference in processing days
-		const daysDifference = processingDays - (service.processingDays || 0);
+		// Track if any package's processing days have changed
+		let processingDaysChanged = false;
+		let oldPackages = service.packages || [];
+		
+		// If packages are provided, validate them
+		if (packages && packages.length > 0) {
+			// Check for each package if processing days have changed
+			for (let i = 0; i < packages.length; i++) {
+				const newPkg = packages[i];
+				
+				// If name is missing, return error
+				if (!newPkg.name) {
+					return res.status(400).json({
+						message: `Package ${i + 1} must have a name`,
+					});
+				}
+				
+				// Find the corresponding old package by name or index
+				const oldPkg = oldPackages.find(p => p.name === newPkg.name) || oldPackages[i];
+				
+				// Check if processing days have changed
+				if (oldPkg && oldPkg.processingDays !== newPkg.processingDays) {
+					processingDaysChanged = true;
+				}
+			}
+		}
 
-		// Update the service template
+		// Update service with the new data
 		const updatedService = await Service.findByIdAndUpdate(
 			serviceId,
 			{
 				category,
 				name,
 				description,
-				actualPrice,
-				salePrice,
 				hsncode,
-				processingDays,
-				requiredDocuments,
+				currency,
+				packages: packages || [],
+				requiredDocuments: requiredDocuments || [],
 			},
 			{ new: true }
 		);
 
-		// If processing days have changed, update all active user services
-		if (daysDifference !== 0) {
-			const users = await User.find({ "services.serviceId": serviceId });
-
-			for (const user of users) {
-				const serviceIndex = user.services.findIndex(
-					(s) => s.serviceId.toString() === serviceId
-				);
-
-				if (
-					serviceIndex !== -1 &&
-					user.services[serviceIndex].documents &&
-					user.services[serviceIndex].documents.length > 0
-				) {
-					// Update the due date
-					const currentDueDate = new Date(user.services[serviceIndex].dueDate);
-					currentDueDate.setDate(currentDueDate.getDate() + daysDifference);
-
-					user.services[serviceIndex].dueDate = currentDueDate;
-					user.services[serviceIndex].processingDays = processingDays;
-
-					await user.save();
-				}
-			}
+		// If processing days have changed, update all users' due dates for this service
+		if (processingDaysChanged) {
+			await updateUserDueDatesForService(serviceId, extensionDays);
 		}
 
-		res.json({
+		res.status(200).json({
 			message: "Service updated successfully",
 			service: updatedService,
 		});
-	} catch (err) {
-		console.error("Error updating service:", err);
-		res.status(500).json({
-			message: "Error updating service",
-			error: err.message,
-		});
+	} catch (error) {
+		console.error("Error updating service:", error);
+		res.status(500).json({ message: "Error updating service" });
+	}
+};
+
+// Helper function to update user due dates
+const updateUserDueDatesForService = async (serviceId, extensionDays = 0) => {
+	try {
+		// Find all users who have this service
+		const users = await User.find({ "services.serviceId": serviceId });
+
+		for (const user of users) {
+			// Find the service in the user's services array
+			const userServiceIndex = user.services.findIndex(
+				(s) => s.serviceId.toString() === serviceId.toString()
+			);
+
+			if (userServiceIndex !== -1) {
+				// Get the user's service
+				const userService = user.services[userServiceIndex];
+				
+				// Only update active services
+				if (userService.status !== "Completed" && userService.status !== "Cancelled") {
+					// Find the corresponding package in the service
+					const service = await Service.findById(serviceId);
+					const pkg = service.packages.find(p => p.name === userService.packageName) || service.packages[0];
+					
+					if (pkg) {
+						// Calculate new due date based on processing days and extension
+						const purchaseDate = new Date(userService.purchasedAt);
+						const newDueDate = new Date(purchaseDate);
+						newDueDate.setDate(newDueDate.getDate() + pkg.processingDays + extensionDays);
+						
+						// Update the due date
+						user.services[userServiceIndex].dueDate = newDueDate;
+						await user.save();
+					}
+				}
+			}
+		}
+	} catch (error) {
+		console.error("Error updating user due dates:", error);
 	}
 };
 
@@ -869,6 +826,7 @@ const createEmployee = async (req, res) => {
 		password,
 		Lminus1code,
 		L1EmpCode,
+		designation,
 	} = req.body;
 
 	try {
@@ -880,10 +838,12 @@ const createEmployee = async (req, res) => {
 			!Array.isArray(services) ||
 			services.length === 0 ||
 			!username ||
-			!password ||
-			!Lminus1code
+			!password 
+			// !L1EmpCode
 		) {
-			return res.status(400).json({ message: "All fields are required" });
+			return res
+				.status(400)
+				.json({ message: "All required fields must be provided" });
 		}
 
 		if (role !== "employee") {
@@ -912,6 +872,7 @@ const createEmployee = async (req, res) => {
 			isActive: true,
 			Lminus1code,
 			L1EmpCode,
+			designation,
 		});
 
 		await newEmployee.save();
@@ -1115,9 +1076,15 @@ const assignEmployeeToManager = async (req, res) => {
 	}
 };
 
+function generateReferralCode() {
+	return crypto.randomBytes(3).toString("hex").toUpperCase(); // Generate a 6-character alphanumeric code
+}
+
 // Create a new user (admin or employee)
 const createUser = async (req, res) => {
-	const { name, email, role, serviceId, username, password } = req.body;
+	const { name, email, role, username, mobile, password } = req.body;
+
+	const newReferralCode = generateReferralCode();
 
 	console.log("Received request to create user with data:", req.body);
 
@@ -1132,24 +1099,6 @@ const createUser = async (req, res) => {
 		if (!["employee", "admin", "customer"].includes(role)) {
 			console.log(`Validation failed: Invalid role "${role}"`);
 			return res.status(400).json({ message: "Invalid role" });
-		}
-
-		// Ensure serviceId is valid for employees
-		if (role === "employee") {
-			console.log("Role is employee; validating serviceId...");
-			if (!serviceId) {
-				console.log("Validation failed: Missing serviceId for employee role.");
-				return res
-					.status(400)
-					.json({ message: "Service ID is required for employees" });
-			}
-
-			// Check if the provided serviceId exists
-			const service = await Service.findById(serviceId);
-			if (!service) {
-				console.log(`Validation failed: Invalid serviceId "${serviceId}"`);
-				return res.status(400).json({ message: "Invalid Service ID" });
-			}
 		}
 
 		// Check if the email is already in use
@@ -1173,15 +1122,26 @@ const createUser = async (req, res) => {
 			name,
 			email,
 			role,
-			serviceId,
-
+			isActive: true,
 			username,
+			referralCode: newReferralCode,
 			passwordHash: hashedPassword,
 			salt,
 		});
 
 		// Save the user to the database
 		await newUser.save();
+		const newWallet = new Wallet({
+			userId: newUser._id,
+			referralCode: newUser.referralCode,
+			referredBy: newUser.referralCode || null,
+			balance: 0,
+			referralEarnings: 0,
+			transactions: [],
+			withdrawalRequests: [],
+		});
+		await newWallet.save();
+
 		console.log("New user created successfully:", newUser);
 
 		res.status(201).json({ user: newUser });
@@ -1526,6 +1486,308 @@ const updateCustomerInfo = async (req, res) => {
 	}
 };
 
+const toggleServiceActivation = async (req, res) => {
+	const { serviceId } = req.params;
+
+	try {
+		const service = await Service.findById(serviceId);
+
+		if (!service) {
+			return res.status(404).json({ message: "Service not found" });
+		}
+
+		// Toggle the isActive status
+		service.isActive = !service.isActive;
+		await service.save();
+
+		const statusMessage = service.isActive ? "activated" : "deactivated";
+		res.status(200).json({
+			message: `Service ${statusMessage} successfully`,
+			service,
+		});
+	} catch (err) {
+		console.error("Error toggling service activation:", err);
+		res.status(500).json({ message: "Error updating service status" });
+	}
+};
+
+// Lead Management
+const getAllLeads = async (req, res) => {
+	try {
+		const leads = await Lead.find()
+			.populate('serviceId', 'name category')
+			.populate('assignedToEmployee', 'name email')
+			.sort({ createdAt: -1 });
+		
+		res.status(200).json({ leads });
+	} catch (error) {
+		console.error('Error fetching leads:', error);
+		res.status(500).json({ message: 'Error fetching leads', error: error.message });
+	}
+};
+
+// Assign lead to employee
+const assignLeadToEmployee = async (req, res) => {
+	const { leadId, employeeId } = req.body;
+	
+	try {
+		// Find the lead
+		const lead = await Lead.findById(leadId);
+		if (!lead) {
+			return res.status(404).json({ message: 'Lead not found' });
+		}
+		
+		// Check if lead is already assigned
+		if (lead.status !== 'new') {
+			return res.status(400).json({ message: `Lead is already ${lead.status}` });
+		}
+		
+		// Find the employee
+		const employee = await User.findOne({ _id: employeeId, role: 'employee' });
+		if (!employee) {
+			return res.status(404).json({ message: 'Employee not found' });
+		}
+		
+		// Update lead status
+		lead.status = 'assigned';
+		lead.assignedToEmployee = employeeId;
+		lead.assignedAt = new Date();
+		
+		await lead.save();
+		
+		// Notify the employee
+		await sendEmail(
+			employee.email,
+			'New Lead Assigned',
+			`Dear ${employee.name},
+
+A new lead has been assigned to you:
+
+Lead Details:
+- Name: ${lead.name}
+			- Email: ${lead.email}
+			- Phone: ${lead.mobile}
+			- Service: ${lead.serviceId.name || 'N/A'}
+			
+			Please review this lead in your dashboard and take appropriate action.
+			
+			Best regards,
+			TaxHarbor Team`
+		);
+		
+		res.status(200).json({ 
+			message: 'Lead assigned successfully',
+			lead 
+		});
+	} catch (error) {
+		console.error('Error assigning lead:', error);
+		res.status(500).json({ message: 'Error assigning lead', error: error.message });
+	}
+};
+
+// Accept lead (by employee)
+const acceptLead = async (req, res) => {
+	const { leadId } = req.params;
+	const employee = req.user; // From auth middleware
+	
+	try {
+		// Find the lead
+		const lead = await Lead.findById(leadId)
+			.populate('serviceId');
+		
+		if (!lead) {
+			return res.status(404).json({ message: 'Lead not found' });
+		}
+		
+		// Check if lead is assigned to this employee
+		if (lead.assignedToEmployee.toString() !== employee._id.toString()) {
+			return res.status(403).json({ message: 'This lead is not assigned to you' });
+		}
+		
+		// Check if lead is in the correct status
+		if (lead.status !== 'assigned') {
+			return res.status(400).json({ message: `Lead cannot be accepted because it is ${lead.status}` });
+		}
+		
+		// Update lead status
+		lead.status = 'accepted';
+		lead.acceptedAt = new Date();
+		
+		await lead.save();
+		
+		res.status(200).json({ 
+			message: 'Lead accepted successfully',
+			lead 
+		});
+	} catch (error) {
+		console.error('Error accepting lead:', error);
+		res.status(500).json({ message: 'Error accepting lead', error: error.message });
+	}
+};
+
+// Decline lead (by employee)
+const declineLead = async (req, res) => {
+	const { leadId } = req.params;
+	const { reason } = req.body;
+	const employee = req.user; // From auth middleware
+	
+	try {
+		// Find the lead
+		const lead = await Lead.findById(leadId);
+		if (!lead) {
+			return res.status(404).json({ message: 'Lead not found' });
+		}
+		
+		// Check if lead is assigned to this employee
+		if (lead.assignedToEmployee.toString() !== employee._id.toString()) {
+			return res.status(403).json({ message: 'This lead is not assigned to you' });
+		}
+		
+		// Check if lead is in the correct status
+		if (lead.status !== 'assigned') {
+			return res.status(400).json({ message: `Lead cannot be declined because it is ${lead.status}` });
+		}
+		
+		// Update lead status
+		lead.status = 'declined';
+		lead.declinedAt = new Date();
+		lead.declineReason = reason || 'No reason provided';
+		
+		await lead.save();
+		
+		res.status(200).json({ 
+			message: 'Lead declined successfully',
+			lead 
+		});
+	} catch (error) {
+		console.error('Error declining lead:', error);
+		res.status(500).json({ message: 'Error declining lead', error: error.message });
+	}
+};
+
+// Convert lead to customer and order
+const convertLeadToOrder = async (req, res) => {
+	const { leadId, paymentDetails } = req.body;
+	
+	try {
+		// Find the lead
+		const lead = await Lead.findById(leadId)
+			.populate('serviceId')
+			.populate('assignedToEmployee');
+		
+		if (!lead) {
+			return res.status(404).json({ message: 'Lead not found' });
+		}
+		
+		// Check if lead is accepted
+		if (lead.status !== 'accepted') {
+			return res.status(400).json({ message: `Lead must be accepted before conversion (currently ${lead.status})` });
+		}
+		
+		// Generate a unique username if not provided
+		const username = lead.email.split('@')[0] + Math.floor(Math.random() * 1000);
+		
+		// Generate a temporary password
+		const tempPassword = Math.random().toString(36).slice(-8);
+		
+		// Create salt and hash password
+		const salt = crypto.randomBytes(16).toString("hex");
+		const hashedPassword = hashPassword(tempPassword, salt);
+		
+		// Create new customer user
+		const newUser = new User({
+			name: lead.name,
+			email: lead.email,
+			mobile: lead.mobile,
+			role: 'customer',
+			isActive: true,
+			username,
+			passwordHash: hashedPassword,
+			salt,
+			referralCode: generateReferralCode()
+		});
+		
+		await newUser.save();
+		
+		// Create wallet for the new user
+		const newWallet = new Wallet({
+			userId: newUser._id,
+			referralCode: newUser.referralCode,
+			balance: 0,
+			referralEarnings: 0,
+			transactions: [],
+			withdrawalRequests: []
+		});
+		
+		await newWallet.save();
+		
+		// Generate order ID
+		const orderId = `ORD${Date.now()}${Math.floor(Math.random() * 1000)}`;
+		
+		// Calculate due date based on service processing days
+		const dueDate = new Date();
+		const processingDays = lead.serviceId.packages && lead.serviceId.packages.length > 0
+			? lead.serviceId.packages[0].processingDays || 7
+			: 7;
+		dueDate.setDate(dueDate.getDate() + processingDays);
+		
+		// Create service order
+		const serviceOrder = {
+			orderId,
+			serviceId: lead.serviceId._id,
+			activated: true,
+			purchasedAt: new Date(),
+			employeeId: lead.assignedToEmployee ? lead.assignedToEmployee._id : null,
+			status: 'In Process',
+			dueDate,
+			documents: [],
+			queries: []
+		};
+		
+		// Add service order to user
+		newUser.services.push(serviceOrder);
+		await newUser.save();
+		
+		// Update lead status
+		lead.status = 'converted';
+		lead.convertedToOrderId = orderId;
+		lead.convertedAt = new Date();
+		await lead.save();
+		
+		// Send welcome email to the customer
+		await sendEmail(
+			lead.email,
+			'Welcome to TaxHarbor - Your Account and Order Details',
+			`Dear ${lead.name},
+
+Thank you for choosing TaxHarbor. We are pleased to inform you that your account has been created and your service order has been processed.
+
+Account Details:
+- Username: ${username}
+- Password: ${tempPassword} (Please change this on your first login)
+
+Order Details:
+- Order ID: ${orderId}
+- Service: ${lead.serviceId.name}
+- Due Date: ${dueDate.toLocaleDateString()}
+
+You can log in to your dashboard to track your order status and communicate with our team.
+
+Best regards,
+TaxHarbor Team`
+		);
+		
+		res.status(200).json({
+			message: 'Lead converted to customer and order successfully',
+			user: newUser,
+			orderId
+		});
+	} catch (error) {
+		console.error('Error converting lead:', error);
+		res.status(500).json({ message: 'Error converting lead', error: error.message });
+	}
+};
+
 module.exports = {
 	adminLogin,
 	getAllUsers,
@@ -1558,4 +1820,12 @@ module.exports = {
 	promoteToManager,
 
 	assignOrderToEmployee,
+
+	toggleServiceActivation,
+
+	getAllLeads,
+	assignLeadToEmployee,
+	acceptLead,
+	declineLead,
+	convertLeadToOrder
 };

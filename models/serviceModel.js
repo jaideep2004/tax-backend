@@ -1,6 +1,8 @@
 const mongoose = require("mongoose");
 const { CustomObjectId } = require("../utils/idGenerator");
 
+// Old Service Model - Commented out
+/*
 const serviceSchema = new mongoose.Schema(
 	{
 		_id: {
@@ -12,12 +14,17 @@ const serviceSchema = new mongoose.Schema(
 		description: { type: String },
 		actualPrice: { type: Number, required: true },
 		salePrice: { type: Number, required: true },
+		currency: { type: String, required: true },
 		hsncode: { type: String, required: true },
 		// dueDate: { type: Date, required: true },
 		processingDays: {
 			type: Number,
 			required: true, 
 			default: 7, // Default processing time in days
+		},
+		isActive: {
+			type: Boolean,
+			default: true, // Services are active by default
 		},
 		requiredDocuments: [
 			{
@@ -38,51 +45,54 @@ serviceSchema.pre("validate", async function (next) {
 	next();
 });
 module.exports = mongoose.model("Service", serviceSchema);
+*/
 
-// Updated Service Model
-// const mongoose = require("mongoose");
-// const { CustomObjectId } = require("../utils/idGenerator");
+// Updated Service Model with Packages
+const packageSchema = new mongoose.Schema({
+	name: { type: String, required: true },
+	description: { type: String },
+	actualPrice: { type: Number },
+	salePrice: { type: Number },
+	features: [{ type: String }],
+	processingDays: {
+		type: Number,
+		required: true,
+		default: 7,
+	},
+});
 
-// const packageSchema = new mongoose.Schema({
-// 	name: { type: String, required: true },
-// 	description: { type: String },
-// 	actualPrice: { type: Number, required: true },
-// 	salePrice: { type: Number, required: true },
-// 	features: [{ type: String }],
-// 	processingDays: {
-// 		type: Number,
-// 		required: true,
-// 		default: 7,
-// 	},
-// });
+const serviceSchema = new mongoose.Schema(
+	{
+		_id: {
+			type: String,
+			required: true,
+		},
+		category: { type: String, required: true },
+		name: { type: String, required: true },
+		description: { type: String },
+		hsncode: { type: String, required: true },
+		currency: { type: String, default: "INR" },
+		isActive: {
+			type: Boolean,
+			default: true, // Services are active by default
+		},
+		packages: [packageSchema],
+		requiredDocuments: [
+			{
+				name: String,
+				description: String,
+				required: Boolean,
+			},
+		],
+	},
+	{ timestamps: true }
+);
 
-// const serviceSchema = new mongoose.Schema(
-// 	{
-// 		_id: {
-// 			type: String,
-// 			required: true,
-// 		},
-// 		category: { type: String, required: true },
-// 		name: { type: String, required: true },
-// 		description: { type: String },
-// 		hsncode: { type: String, required: true },
-// 		packages: [packageSchema],
-// 		requiredDocuments: [
-// 			{
-// 				name: String,
-// 				description: String,
-// 				required: Boolean,
-// 			},
-// 		],
-// 	},
-// 	{ timestamps: true }
-// );
+serviceSchema.pre("validate", async function (next) {
+	if (!this._id) {
+		this._id = await CustomObjectId.generate("SER");
+	}
+	next();
+});
 
-// serviceSchema.pre("validate", async function (next) {
-// 	if (!this._id) {
-// 		this._id = await CustomObjectId.generate("SER");
-// 	}
-// 	next();
-// });
-
-// module.exports = mongoose.model("Service", serviceSchema);
+module.exports = mongoose.model("Service", serviceSchema);

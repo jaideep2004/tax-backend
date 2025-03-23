@@ -28,6 +28,9 @@ const {
 	processFlexiFunnelRedirect,
 } = require("../controllers/customerController");
 
+// const customerAuthMiddleware = require('../middlewares/customerAuthMiddleware');
+const { createLead } = require('../controllers/leadController');
+
 const router = express.Router();
 
 router.get("/cdashboard", authMiddleware, getCustomerDashboard);
@@ -69,5 +72,8 @@ router.post("/update-bank-details", authMiddleware, updateBankDetails);
 router.get("/wallet/test", authMiddleware, (req, res) => {
 	res.json({ message: "Wallet routes are working", user: req.user });
 });
+
+// Lead creation route (no auth required)
+router.post('/lead', createLead);
 
 module.exports = router;

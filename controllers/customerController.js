@@ -23,7 +23,7 @@ const transporter = nodemailer.createTransport({
 	service: "gmail",
 	auth: {
 		user: process.env.EMAIL_USER,
-		pass: process.env.EMAIL_PASS, 
+		pass: process.env.EMAIL_PASS,
 	},
 });
 
@@ -137,7 +137,8 @@ const getCustomerDashboard = async (req, res) => {
 
 const getUserServices = async (req, res) => {
 	try {
-		const services = await Service.find({});
+		// Only return active services
+		const services = await Service.find({ isActive: { $ne: false } });
 		res.json({ services });
 	} catch (err) {
 		res.status(500).json({ message: "Error fetching services" });
@@ -148,86 +149,6 @@ const getUserServices = async (req, res) => {
 function generateReferralCode() {
 	return crypto.randomBytes(3).toString("hex").toUpperCase(); // Generate a 6-character alphanumeric code
 }
-
-// const registerCustomer = async (req, res) => {
-// 	try {
-// 		const { name, lastname, username, email, mobile, password, referralCode } =
-// 			req.body;
-
-// 		// Generate a referral code for the new user
-// 		const newReferralCode = generateReferralCode();
-
-// 		if (!name || !email || !username || !password) {
-// 			return res.status(400).json({ message: "All fields are required" });
-// 		}
-
-// 		// Check if a user with the same email or username already exists
-// 		const existingUser = await User.findOne({ email });
-// 		if (existingUser) {
-// 			return res
-// 				.status(400)
-// 				.json({ message: "User with this email already exists" });
-// 		}
-
-// 		const salt = crypto.randomBytes(16).toString("hex");
-// 		const hashedPassword = hashPassword(password, salt);
-
-// 		// Create a new user
-// 		const newUser = new User({
-// 			name,
-// 			lastname,
-// 			email,
-// 			mobile,
-// 			username,
-// 			passwordHash: hashedPassword,
-// 			salt,
-// 			role: "customer",
-// 			isProfileComplete: false,
-// 			serviceStatus: "active",
-// 			referralCode: newReferralCode,
-// 			isActive: true,
-// 		});
-
-// 		await newUser.save();
-
-// 		// Create wallet for the new user
-// 		const newWallet = new Wallet({
-// 			userId: newUser._id,
-// 			referralCode: newUser.referralCode,
-// 			referredBy: referralCode || null,
-// 			balance: 0,
-// 			referralEarnings: 0,
-// 			transactions: [],
-// 			withdrawalRequests: [],
-// 		});
-// 		await newWallet.save();
-
-// 		// Handle referral if referral code is provided
-// 		if (referralCode) {
-// 			await handleReferral(referralCode, newUser._id);
-// 		}
-
-// 		// Send welcome email
-// 		await sendEmail(
-// 			email,
-// 			"Welcome to Our Service",
-// 			`Hello ${name},\nThank you for registering with us! Your referral code is: ${newReferralCode}`
-// 		);
-
-// 		res.status(200).json({
-// 			message: "Registration successful!",
-// 			userId: newUser._id,
-// 			referralCode: newReferralCode,
-// 			wallet: {
-// 				balance: newWallet.balance,
-// 				referralCode: newWallet.referralCode,
-// 			},
-// 		});
-// 	} catch (error) {
-// 		console.error(error);
-// 		res.status(500).json({ message: "Error registering user" });
-// 	}
-// };
 
 const registerCustomer = async (req, res) => {
 	try {
@@ -240,6 +161,9 @@ const registerCustomer = async (req, res) => {
 			password,
 			referralCode,
 			serviceId,
+			selectedPackage,
+			processingDays,
+			order_id
 		} = req.body;
 
 		// Generate a referral code for the new user
@@ -278,18 +202,30 @@ const registerCustomer = async (req, res) => {
 
 		// If serviceId is provided, add it to the user's services
 		if (serviceId) {
-			// Get service details to check dueDate
+			// Get service details
 			const service = await Service.findById(serviceId);
 			if (service) {
 				// Generate a custom order ID
-				const orderId = generateOrderId(newUser._id);
+				const orderId = order_id || generateOrderId(newUser._id);
+
+				// Calculate due date based on package processing days
+				const purchaseDate = new Date();
+				const dueDate = new Date(purchaseDate);
+				
+				// Use the package processing days if provided, otherwise use service default
+				const packageProcessingDays = processingDays || 
+					(service.processingDays ? service.processingDays : 7);
+					
+				dueDate.setDate(dueDate.getDate() + packageProcessingDays);
 
 				newUser.services.push({
 					serviceId,
 					orderId,
 					activated: true,
-					purchasedAt: new Date(),
-					dueDate: service.dueDate,
+					purchasedAt: purchaseDate,
+					dueDate: dueDate,
+					packageName: selectedPackage || null, // Store the package name
+					processingDays: packageProcessingDays,
 					requiredDocuments: service.requiredDocuments,
 					documents: [],
 				});
@@ -353,62 +289,6 @@ const registerCustomer = async (req, res) => {
 		res.status(500).json({ message: "Error registering user" });
 	}
 };
-
-// const registerFlexiCustomer = async (req, res) => {
-// 	try {
-// 		const {
-// 			name,
-// 			email,
-// 			mobile,
-
-// 			password,
-// 			leadSource,
-// 		} = req.body;
-
-// 		// Generate unique ID for the user
-// 		const userId = `CUST${Date.now()}${Math.floor(Math.random() * 1000)}`;
-
-// 		// Generate salt and hash password
-// 		const salt = crypto.randomBytes(16).toString("hex");
-// 		const hashedPassword = hashPassword(password, salt);
-
-// 		// Create new user with serviceInterest
-// 		const newUser = new User({
-// 			_id: userId,
-// 			name,
-// 			email,
-// 			mobile,
-
-// 			passwordHash: hashedPassword,
-// 			salt,
-// 			role: "customer",
-// 			leadSource: leadSource || "flexfunneli",
-// 			isActive: true, // Activate the user immediately
-// 			username: email, // Use email as username
-// 		});
-
-// 		await newUser.save();
-
-// 		// Send welcome email
-// 		await sendEmail(
-// 			email,
-// 			"Welcome to Our Service",
-// 			`Dear ${name},\n\nThank you for registering. Your account has been created successfully. Our team will review and assign your service within 24 hours.\n\nBest regards,\nTeam`
-// 		);
-
-// 		res.status(201).json({
-// 			message: "Registration successful",
-// 			email: newUser.email,
-// 			userId: newUser._id,
-// 		});
-// 	} catch (error) {
-// 		console.error("Registration error:", error);
-// 		res.status(500).json({
-// 			message: "Registration failed",
-// 			error: error.message,
-// 		});
-// 	}
-// };
 
 const registerFlexiCustomer = async (req, res) => {
 	try {
@@ -547,7 +427,15 @@ const generateOrderId = (userId) => {
 
 const handlePaymentSuccess = async (req, res) => {
 	try {
-		const { razorpay_payment_id, amount, userId, serviceId } = req.body;
+		const { 
+			razorpay_payment_id, 
+			amount, 
+			userId, 
+			serviceId, 
+			packageName, 
+			processingDays,
+			order_id
+		} = req.body;
 
 		// Initialize Razorpay instance
 		const razorpayInstance = new Razorpay({
@@ -569,14 +457,20 @@ const handlePaymentSuccess = async (req, res) => {
 			return res.status(404).json({ message: "User not found" });
 		}
 
-		// Fetch service details to get dueDate
+		// Fetch service details
 		const service = await Service.findById(serviceId);
 		if (!service) {
 			return res.status(404).json({ message: "Service not found" });
 		}
 
+		// Find the selected package if provided
+		let selectedPackageDetails = null;
+		if (packageName && service.packages && service.packages.length > 0) {
+			selectedPackageDetails = service.packages.find(pkg => pkg.name === packageName);
+		}
+
 		// Generate a custom order ID
-		const orderId = generateOrderId(userId); // Generate the order ID here
+		const orderId = order_id || generateOrderId(userId);
 
 		// Add payment details to payment history
 		const amountInRupees = amount / 100;
@@ -588,13 +482,26 @@ const handlePaymentSuccess = async (req, res) => {
 			paymentMethod: paymentDetails.method,
 		});
 
+		// Calculate due date based on package processing days or service default
+		const purchaseDate = new Date();
+		const dueDate = new Date(purchaseDate);
+		
+		// Use package processing days if provided, otherwise fallback to service default or 7 days
+		const packageProcessingDays = processingDays || 
+			(selectedPackageDetails?.processingDays) || 
+			(service.processingDays) || 7;
+			
+		dueDate.setDate(dueDate.getDate() + packageProcessingDays);
+
 		// Add new service with custom orderId
 		user.services.push({
 			serviceId,
-			orderId: orderId, // Use the custom orderId
+			orderId: orderId,
 			activated: true,
-			purchasedAt: new Date(),
-			dueDate: service.dueDate, // Due date from service
+			purchasedAt: purchaseDate,
+			dueDate: dueDate,
+			packageName: packageName || null,
+			processingDays: packageProcessingDays,
 			requiredDocuments: service.requiredDocuments,
 			documents: [],
 		});
@@ -609,11 +516,12 @@ const handlePaymentSuccess = async (req, res) => {
 		);
 
 		// Send notification email
+		const packageInfo = packageName ? ` (${packageName} package)` : '';
 		if (!assignmentResult.success) {
 			await sendEmail(
 				user.email,
 				"Service Purchase Successful",
-				`Your payment of Rs.${amountInRupees} has been processed successfully. An employee will be assigned to you shortly.`
+				`Your payment of Rs.${amountInRupees} for ${service.name}${packageInfo} has been processed successfully. An employee will be assigned to you shortly.`
 			);
 		}
 
@@ -794,10 +702,17 @@ const initiatePayment = async (req, res) => {
 const getServiceById = async (req, res) => {
 	try {
 		const { serviceId } = req.params;
-		const service = await Service.findById(serviceId); // Assuming you're using Mongoose to fetch services
+		const service = await Service.findById(serviceId);
+		
 		if (!service) {
 			return res.status(404).json({ message: "Service not found" });
 		}
+		
+		// Check if service is active
+		if (service.isActive === false) {
+			return res.status(404).json({ message: "Service not available" });
+		}
+		
 		res.json({ service });
 	} catch (err) {
 		console.error("Error fetching service:", err);

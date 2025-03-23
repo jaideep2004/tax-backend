@@ -31,15 +31,15 @@ app.get("/", (req, res) => {
 	res.send("TAXHARBOR BACKEND 3 march!!");
 });
 
-// app.listen(PORT, () => {
-// 	console.log(`Server running on port ${PORT}`);
-// });
-
-const options = {
-	key: fs.readFileSync(path.join(__dirname, "certs/privkey.pem")),
-	cert: fs.readFileSync(path.join(__dirname, "certs/fullchain.pem")),
-};
-
-https.createServer(options, app).listen(PORT, () => {
-	console.log(`Server running on port ${PORT} (HTTPS)`);
+app.listen(PORT, () => {
+	console.log(`Server running on port ${PORT}`);
 });
+
+// const options = {
+// 	key: fs.readFileSync(path.join(__dirname, "certs/privkey.pem")),
+// 	cert: fs.readFileSync(path.join(__dirname, "certs/fullchain.pem")),
+// };
+
+// https.createServer(options, app).listen(PORT, () => {
+// 	console.log(`Server running on port ${PORT} (HTTPS)`);
+// });
