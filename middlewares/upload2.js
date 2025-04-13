@@ -11,10 +11,10 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 // Enhanced storage configuration
-const storage = multer.diskStorage({
+const storage = multer.diskStorage({ 
 	destination: function (req, file, cb) {
-		// Get userId from authenticated user
-		const userId = req.user.userId;
+		// Get userId from authenticated user, supporting both formats
+		const userId = req.user?.userId || req.user?._id;
 		if (!userId) {
 			return cb(new Error("User ID is required"));
 		}

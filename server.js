@@ -5,7 +5,6 @@ const adminRoutes = require("./routes/adminRoutes");
 const customerRoutes = require("./routes/customerRoutes");
 const messageRoutes = require("./routes/messageRoutes");
 const employeeRoutes = require("./routes/employeeRoutes");
-const managerRoutes = require("./routes/managerRoutes");
 const cors = require("cors");
 const path = require("path");
 const https = require("https");
@@ -22,13 +21,12 @@ app.use("/api/admin", adminRoutes); // Admin routes
 app.use("/api/customers", customerRoutes); // Admin routes
 app.use("/api/messages", messageRoutes); // Admin routes
 app.use("/api/employees", employeeRoutes); // Employee routes
-app.use("/api/managers", managerRoutes);
 
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const PORT = process.env.PORT || 8000;
 
 app.get("/", (req, res) => {
-	res.send("TAXHARBOR BACKEND 23 march!!");
+	res.send("TAXHARBOR BACKEND 13 april!!");
 });
 
 // app.listen(PORT, () => {

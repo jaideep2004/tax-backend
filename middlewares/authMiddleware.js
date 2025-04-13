@@ -1,43 +1,3 @@
-// const jwt = require("jsonwebtoken");
-
-// const authMiddleware = (req, res, next) => {
-// 	try {
-// 		// Extract the token from the Authorization header
-// 		const token = req.header("Authorization")?.replace("Bearer ", "");
-
-// 		if (!token) {
-// 			return res
-// 				.status(401)
-// 				.json({ message: "Access Denied. No token provided." });
-// 		}
-
-// 		// Verify the token
-// 		const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-// 		// Ensure the role and other required fields are present
-// 		if (!decoded._id || !decoded.role) {
-// 			return res.status(400).json({ message: "Invalid token structure." });
-// 		}
-
-// 		// Attach the decoded user information to the request
-// 		req.user = {
-// 			userId: decoded._id, // Add this line to match what the controller expects
-// 			_id: decoded._id,
-// 			role: decoded.role,
-// 			name: decoded.name || "Unknown",
-// 		};
-
-// 		next(); // Proceed to the next middleware or route handler
-// 	} catch (error) {
-// 		console.error("Authentication Error:", error);
-// 		res
-// 			.status(400)
-// 			.json({ message: "Invalid or expired token.", error: error.message });
-// 	}
-// };
-
-// module.exports = authMiddleware;
-
 const jwt = require("jsonwebtoken");
 
 // Custom error messages for different JWT errors
@@ -75,8 +35,12 @@ const authMiddleware = (req, res, next) => {
         // Verify token
         const decoded = verifyToken(token, process.env.JWT_SECRET);
 
+        // Support both token formats (userId or _id)
+        const id = decoded._id || decoded.userId;
+        const role = decoded.role;
+
         // Validate token structure
-        if (!decoded._id || !decoded.role) {
+        if (!id || !role) {
             return res.status(401).json({
                 success: false, 
                 message: "Access Denied. Invalid token structure."
@@ -85,9 +49,9 @@ const authMiddleware = (req, res, next) => {
 
         // Attach user info to request
         req.user = {
-            userId: decoded._id,
-            _id: decoded._id,
-            role: decoded.role,
+            userId: id,
+            _id: id,
+            role: role,
             name: decoded.name || "Unknown"
         };
 

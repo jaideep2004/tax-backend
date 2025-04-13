@@ -3,6 +3,10 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/userModel");
 const Service = require("../models/serviceModel");
 const Message = require("../models/messageModel");
+const Lead = require("../models/leadModel");
+const path = require("path");
+const fs = require("fs");
+const { sendEmail } = require("../utils/emailUtils");
 
 // Utility: Hash password using SHA-256
 const hashPassword = (password, salt) => {
@@ -659,6 +663,281 @@ const updateEmployeeProfile = async (req, res) => {
 	}
 };
 
+// Get leads assigned to an employee
+const getAssignedLeads = async (req, res) => {
+	try {
+		const employeeId = req.user._id;
+
+		// Find all leads assigned to this employee
+		const leads = await Lead.find({ assignedToEmployee: employeeId })
+			.populate({
+				path: 'serviceId',
+				select: 'name description category packages',
+			})
+			.sort({ createdAt: -1 });
+
+		res.status(200).json({
+			success: true,
+			leads,
+		});
+	} catch (error) {
+		console.error('Error fetching assigned leads:', error);
+		res.status(500).json({
+			success: false,
+			message: 'Error fetching assigned leads',
+			error: error.message,
+		});
+	}
+};
+
+// Approve a lead (change status to accepted)
+const approveLead = async (req, res) => {
+	try {
+		const employeeId = req.user._id;
+		const { leadId } = req.params;
+
+		// Find the lead and verify it's assigned to this employee
+		const lead = await Lead.findOne({
+			_id: leadId,
+			assignedToEmployee: employeeId,
+		});
+
+		if (!lead) {
+			return res.status(404).json({
+				success: false,
+				message: 'Lead not found or not assigned to you',
+			});
+		}
+
+		// Verify lead status is 'assigned'
+		if (lead.status !== 'assigned') {
+			return res.status(400).json({
+				success: false,
+				message: `Cannot approve lead with status '${lead.status}'. Lead must be in 'assigned' status.`,
+			});
+		}
+
+		// Update lead status to 'accepted' and set acceptedAt timestamp
+		lead.status = 'accepted';
+		lead.acceptedAt = new Date();
+		await lead.save();
+
+		res.status(200).json({
+			success: true,
+			message: 'Lead approved successfully',
+			lead,
+		});
+	} catch (error) {
+		console.error('Error approving lead:', error);
+		res.status(500).json({
+			success: false,
+			message: 'Error approving lead',
+			error: error.message,
+		});
+	}
+};
+
+// Reject a lead (employee can reject an assigned lead)
+const rejectLead = async (req, res) => {
+	try {
+		const employeeId = req.user._id;
+		const { leadId } = req.params;
+		const { reason } = req.body;
+
+		// Validate reason is provided
+		if (!reason) {
+			return res.status(400).json({
+				success: false,
+				message: 'Please provide a reason for rejecting the lead',
+			});
+		}
+
+		// Find the lead and verify it's assigned to this employee
+		const lead = await Lead.findOne({
+			_id: leadId,
+			assignedToEmployee: employeeId,
+		});
+
+		if (!lead) {
+			return res.status(404).json({
+				success: false,
+				message: 'Lead not found or not assigned to you',
+			});
+		}
+
+		// Verify lead status is 'assigned'
+		if (lead.status !== 'assigned') {
+			return res.status(400).json({
+				success: false,
+				message: `Cannot reject lead with status '${lead.status}'. Lead must be in 'assigned' status.`,
+			});
+		}
+
+		// Update lead status to 'rejected' and set rejectedAt timestamp
+		lead.status = 'rejected';
+		lead.rejectedAt = new Date();
+		lead.rejectReason = reason;
+		await lead.save();
+
+		// Notify admin about rejection
+		const admin = await User.findOne({ role: 'admin' });
+		if (admin && admin.email) {
+			await sendEmail(
+				admin.email,
+				'Lead Rejected',
+				`A lead has been rejected by an employee:
+
+Lead Details:
+- ID: ${lead._id}
+- Name: ${lead.name}
+- Email: ${lead.email}
+- Service: ${lead.serviceId ? (typeof lead.serviceId === 'object' ? lead.serviceId.name : lead.serviceId) : 'N/A'}
+
+Reason for rejection: ${reason}
+
+Please review this in the admin dashboard.`
+			);
+		}
+
+		res.status(200).json({
+			success: true,
+			message: 'Lead rejected successfully',
+			lead,
+		});
+	} catch (error) {
+		console.error('Error rejecting lead:', error);
+		res.status(500).json({
+			success: false,
+			message: 'Error rejecting lead',
+			error: error.message,
+		});
+	}
+};
+
+// Upload payment evidence and add notes to a lead
+const uploadLeadDocuments = async (req, res) => {
+	try {
+		const employeeId = req.user._id;
+		const { leadId } = req.params;
+		const { note, paymentAmount, paymentMethod, paymentReference } = req.body;
+
+		// Find the lead and verify it's assigned to this employee
+		const lead = await Lead.findOne({
+			_id: leadId,
+			assignedToEmployee: employeeId,
+		});
+
+		if (!lead) {
+			return res.status(404).json({
+				success: false,
+				message: 'Lead not found or not assigned to you',
+			});
+		}
+
+		// Verify lead status is 'accepted' (as documents are usually uploaded after accepting)
+		if (lead.status !== 'accepted') {
+			return res.status(400).json({
+				success: false,
+				message: `Documents can only be uploaded for accepted leads (current status: ${lead.status})`,
+			});
+		}
+
+		// Process uploaded files
+		if (!req.files || req.files.length === 0) {
+			return res.status(400).json({
+				success: false,
+				message: 'No files uploaded',
+			});
+		}
+
+		// Create upload directory if it doesn't exist
+		const uploadDir = path.join('uploads', 'leads', leadId);
+		if (!fs.existsSync(uploadDir)) {
+			fs.mkdirSync(uploadDir, { recursive: true });
+		}
+
+		// Process document uploads
+		const documentRecords = await Promise.all(
+			req.files.map(async (file) => {
+				const newPath = path.join(uploadDir, file.filename);
+				fs.renameSync(file.path, newPath);
+				return {
+					filename: file.filename,
+					originalName: file.originalname,
+					path: newPath,
+					mimetype: file.mimetype,
+					size: file.size,
+					uploadedAt: new Date(),
+					description: 'Payment evidence',
+				};
+			})
+		);
+
+		// Add documents to lead
+		lead.documents = lead.documents || [];
+		lead.documents.push(...documentRecords);
+
+		// Add employee note if provided
+		if (note) {
+			lead.employeeNotes = lead.employeeNotes || [];
+			lead.employeeNotes.push({
+				note,
+				createdAt: new Date(),
+			});
+		}
+
+		// Add payment details if provided
+		if (paymentAmount || paymentMethod || paymentReference) {
+			lead.paymentDetails = lead.paymentDetails || {};
+			if (paymentAmount) lead.paymentDetails.amount = parseFloat(paymentAmount);
+			if (paymentMethod) lead.paymentDetails.method = paymentMethod;
+			if (paymentReference) lead.paymentDetails.reference = paymentReference;
+			lead.paymentDetails.date = new Date();
+			lead.paymentDetails.hasEvidence = true;
+		}
+
+		await lead.save();
+
+		// Notify admin about document upload
+		const admin = await User.findOne({ role: 'admin' });
+		if (admin && admin.email) {
+			await sendEmail(
+				admin.email,
+				'Lead Documents Uploaded',
+				`Documents have been uploaded for a lead:
+
+Lead Details:
+- ID: ${lead._id}
+- Name: ${lead.name}
+- Email: ${lead.email}
+- Service: ${lead.serviceId ? (typeof lead.serviceId === 'object' ? lead.serviceId.name : lead.serviceId) : 'N/A'}
+
+${note ? `Employee Note: ${note}` : ''}
+
+Payment Details:
+${paymentAmount ? `- Amount: ₹${paymentAmount}` : ''}
+${paymentMethod ? `- Method: ${paymentMethod}` : ''}
+${paymentReference ? `- Reference: ${paymentReference}` : ''}
+
+${documentRecords.length} document(s) uploaded. Please review this in the admin dashboard.`
+			);
+		}
+
+		res.status(200).json({
+			success: true,
+			message: 'Documents uploaded successfully',
+			lead,
+		});
+	} catch (error) {
+		console.error('Error uploading lead documents:', error);
+		res.status(500).json({
+			success: false,
+			message: 'Error uploading documents',
+			error: error.message,
+		});
+	}
+};
+
 module.exports = {
 	updateServiceStatus,
 	getAssignedCustomers,
@@ -667,4 +946,8 @@ module.exports = {
 	replyToQuery,
 	updateEmployeeProfile,
 	getEmployeeDash,
+	getAssignedLeads,
+	approveLead,
+	rejectLead,
+	uploadLeadDocuments,
 };

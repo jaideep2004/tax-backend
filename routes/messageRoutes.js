@@ -8,12 +8,12 @@ const {
 const authMiddleware = require("../middlewares/authMiddleware");
 
 const uploadMiddleware = require("../middlewares/upload");
-const router = express.Router();
+const router = express.Router(); 
 
 // Send a message
 router.post("/send", authMiddleware, uploadMiddleware, sendMessage);
 
-// Get all messages
+// Get all messages 
 router.get("/", authMiddleware, getMessages);
 
 // Mark a message as read

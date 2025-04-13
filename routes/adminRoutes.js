@@ -39,6 +39,7 @@ const {
 	acceptLead,
 	declineLead,
 	convertLeadToOrder,
+	sendLeadBackToEmployee,
 } = require("../controllers/adminController");
 
 // Admin login
@@ -180,5 +181,6 @@ router.post("/leads/assign", authMiddleware, assignLeadToEmployee);
 router.put("/leads/:leadId/accept", authMiddleware, acceptLead);
 router.put("/leads/:leadId/decline", authMiddleware, declineLead);
 router.post("/leads/convert", authMiddleware, convertLeadToOrder);
+router.post("/leads/send-back", authMiddleware, sendLeadBackToEmployee);
 
 module.exports = router;

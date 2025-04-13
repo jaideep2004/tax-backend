@@ -560,10 +560,9 @@ const createService = async (req, res) => {
 			return res.status(400).json({ message: "Missing required fields" });
 		}
 
-		// Validate packages
-		if (!packages || !Array.isArray(packages) || packages.length === 0) {
-			return res.status(400).json({ message: "At least one package is required" });
-		}
+		// Make packages entirely optional
+		// If packages is an empty array or null/undefined, set to empty array
+		const servicePackages = Array.isArray(packages) ? packages.filter(pkg => pkg && Object.keys(pkg).length > 0) : [];
 
 		const newService = new Service({
 			category,
@@ -571,7 +570,7 @@ const createService = async (req, res) => {
 			description,
 			hsncode,
 			currency: currency || "INR",
-			packages,
+			packages: servicePackages,
 			requiredDocuments: requiredDocuments || [],
 		});
 
@@ -579,30 +578,31 @@ const createService = async (req, res) => {
 		res.status(201).json({ service: newService });
 	} catch (err) {
 		console.error("Error creating service:", err);
-		res.status(500).json({ message: "Error creating service" });
+		res.status(500).json({ message: "Error creating service", error: err.message });
 	}
 };
 
 const updateService = async (req, res) => {
-	try {
-		const { serviceId } = req.params;
-		const {
-			category,
-			name,
-			description,
-			hsncode,
-			currency = "INR",
-			packages,
-			requiredDocuments,
-			extensionDays = 0,
-		} = req.body;
+	const { serviceId } = req.params;
+	const {
+		category,
+		name,
+		description,
+		hsncode,
+		currency,
+		packages,
+		requiredDocuments,
+	} = req.body;
 
-		// Validation - basic fields
+	try {
+		// Validate required fields
 		if (!category || !name || !description || !hsncode) {
-			return res.status(400).json({
-				message: "Required fields (category, name, description, hsncode) are missing",
-			});
+			return res.status(400).json({ message: "Missing required fields" });
 		}
+
+		// Make packages entirely optional
+		// If packages is an empty array or null/undefined, set to empty array
+		const servicePackages = Array.isArray(packages) ? packages.filter(pkg => pkg && Object.keys(pkg).length > 0) : [];
 
 		// Find the service
 		const service = await Service.findById(serviceId);
@@ -610,34 +610,7 @@ const updateService = async (req, res) => {
 			return res.status(404).json({ message: "Service not found" });
 		}
 
-		// Track if any package's processing days have changed
-		let processingDaysChanged = false;
-		let oldPackages = service.packages || [];
-		
-		// If packages are provided, validate them
-		if (packages && packages.length > 0) {
-			// Check for each package if processing days have changed
-			for (let i = 0; i < packages.length; i++) {
-				const newPkg = packages[i];
-				
-				// If name is missing, return error
-				if (!newPkg.name) {
-					return res.status(400).json({
-						message: `Package ${i + 1} must have a name`,
-					});
-				}
-				
-				// Find the corresponding old package by name or index
-				const oldPkg = oldPackages.find(p => p.name === newPkg.name) || oldPackages[i];
-				
-				// Check if processing days have changed
-				if (oldPkg && oldPkg.processingDays !== newPkg.processingDays) {
-					processingDaysChanged = true;
-				}
-			}
-		}
-
-		// Update service with the new data
+		// Update the service
 		const updatedService = await Service.findByIdAndUpdate(
 			serviceId,
 			{
@@ -645,65 +618,55 @@ const updateService = async (req, res) => {
 				name,
 				description,
 				hsncode,
-				currency,
-				packages: packages || [],
+				currency: currency || "INR",
+				packages: servicePackages,
 				requiredDocuments: requiredDocuments || [],
 			},
 			{ new: true }
 		);
 
-		// If processing days have changed, update all users' due dates for this service
-		if (processingDaysChanged) {
-			await updateUserDueDatesForService(serviceId, extensionDays);
-		}
+		// Check if any processing days have changed in the packages
+		const oldPackages = service.packages || [];
+		const newPackages = servicePackages;
 
-		res.status(200).json({
-			message: "Service updated successfully",
-			service: updatedService,
-		});
-	} catch (error) {
-		console.error("Error updating service:", error);
-		res.status(500).json({ message: "Error updating service" });
-	}
-};
+		// Find users who have this service and update their due dates if processing days changed
+		for (let i = 0; i < newPackages.length; i++) {
+			const newPkg = newPackages[i];
+			const oldPkg = oldPackages.find(p => p._id && p._id.toString() === newPkg._id);
 
-// Helper function to update user due dates
-const updateUserDueDatesForService = async (serviceId, extensionDays = 0) => {
-	try {
-		// Find all users who have this service
-		const users = await User.find({ "services.serviceId": serviceId });
+			if (oldPkg && newPkg.processingDays !== oldPkg.processingDays) {
+				const daysDifference = newPkg.processingDays - oldPkg.processingDays;
 
-		for (const user of users) {
-			// Find the service in the user's services array
-			const userServiceIndex = user.services.findIndex(
-				(s) => s.serviceId.toString() === serviceId.toString()
-			);
-
-			if (userServiceIndex !== -1) {
-				// Get the user's service
-				const userService = user.services[userServiceIndex];
+				// Find all users with this service and update their due dates
+				const users = await User.find({ "services.serviceId": serviceId });
 				
-				// Only update active services
-				if (userService.status !== "Completed" && userService.status !== "Cancelled") {
-					// Find the corresponding package in the service
-					const service = await Service.findById(serviceId);
-					const pkg = service.packages.find(p => p.name === userService.packageName) || service.packages[0];
-					
-					if (pkg) {
-						// Calculate new due date based on processing days and extension
-						const purchaseDate = new Date(userService.purchasedAt);
-						const newDueDate = new Date(purchaseDate);
-						newDueDate.setDate(newDueDate.getDate() + pkg.processingDays + extensionDays);
-						
+				for (const user of users) {
+					const serviceIndex = user.services.findIndex(s => 
+						s.serviceId.toString() === serviceId
+					);
+
+					if (serviceIndex !== -1 && user.services[serviceIndex].status === "In Process") {
 						// Update the due date
-						user.services[userServiceIndex].dueDate = newDueDate;
+						const currentDueDate = new Date(user.services[serviceIndex].dueDate);
+						currentDueDate.setDate(currentDueDate.getDate() + daysDifference);
+						
+						user.services[serviceIndex].dueDate = currentDueDate;
 						await user.save();
 					}
 				}
 			}
 		}
-	} catch (error) {
-		console.error("Error updating user due dates:", error);
+
+		res.json({
+			message: "Service updated successfully",
+			service: updatedService,
+		});
+	} catch (err) {
+		console.error("Error updating service:", err);
+		res.status(500).json({
+			message: "Error updating service",
+			error: err.message,
+		});
 	}
 };
 
@@ -1668,6 +1631,7 @@ const declineLead = async (req, res) => {
 // Convert lead to customer and order
 const convertLeadToOrder = async (req, res) => {
 	const { leadId, paymentDetails } = req.body;
+	const { packageId } = paymentDetails; // Extract packageId from paymentDetails
 	
 	try {
 		// Find the lead
@@ -1721,17 +1685,55 @@ const convertLeadToOrder = async (req, res) => {
 		
 		await newWallet.save();
 		
+		// Handle payment history - prioritize conversion payment over lead payment data to avoid duplication
+		// Only add one payment entry
+		if (paymentDetails && paymentDetails.amount) {
+			// Use the conversion payment details
+			newUser.paymentHistory.push({
+				paymentId: paymentDetails.reference || `CNV-${leadId}`,
+				amount: parseFloat(paymentDetails.amount),
+				date: new Date(),
+				status: "success",
+				paymentMethod: paymentDetails.method || "cash",
+			});
+		} else if (lead.paymentDetails && lead.paymentDetails.amount) {
+			// Only use lead payment details if no conversion payment details provided
+			newUser.paymentHistory.push({
+				paymentId: lead.paymentDetails.reference || `LEAD-${leadId}`,
+				amount: lead.paymentDetails.amount,
+				date: lead.paymentDetails.date || new Date(),
+				status: "success",
+				paymentMethod: lead.paymentDetails.method || "cash",
+			});
+		}
+		
 		// Generate order ID
 		const orderId = `ORD${Date.now()}${Math.floor(Math.random() * 1000)}`;
 		
-		// Calculate due date based on service processing days
+		// Find the selected package if provided and if service has packages
+		let selectedPackage = null;
+		const serviceHasPackages = lead.serviceId.packages && lead.serviceId.packages.length > 0;
+		
+		if (packageId && serviceHasPackages) {
+			selectedPackage = lead.serviceId.packages.find(pkg => pkg._id.toString() === packageId);
+		} else if (serviceHasPackages) {
+			// Use first package as default if service has packages but none selected
+			selectedPackage = lead.serviceId.packages[0];
+		}
+		
+		// Calculate due date based on selected package or default processing days
 		const dueDate = new Date();
-		const processingDays = lead.serviceId.packages && lead.serviceId.packages.length > 0
-			? lead.serviceId.packages[0].processingDays || 7
-			: 7;
+		let processingDays = 7; // Default processing days if no package or processing days specified
+		
+		if (selectedPackage && selectedPackage.processingDays) {
+			processingDays = selectedPackage.processingDays;
+		} else if (lead.serviceId.processingDays) {
+			processingDays = lead.serviceId.processingDays;
+		}
+		
 		dueDate.setDate(dueDate.getDate() + processingDays);
 		
-		// Create service order
+		// Create service order with package information if available
 		const serviceOrder = {
 			orderId,
 			serviceId: lead.serviceId._id,
@@ -1741,8 +1743,18 @@ const convertLeadToOrder = async (req, res) => {
 			status: 'In Process',
 			dueDate,
 			documents: [],
-			queries: []
+			queries: [],
+			paymentAmount: parseFloat(paymentDetails.amount) || 0,
+			paymentMethod: paymentDetails.method || 'cash',
+			paymentReference: paymentDetails.reference || ''
 		};
+		
+		// Add package details if a package was selected
+		if (selectedPackage) {
+			serviceOrder.packageId = selectedPackage._id;
+			serviceOrder.packageName = selectedPackage.name;
+			serviceOrder.price = selectedPackage.salePrice || selectedPackage.actualPrice;
+		}
 		
 		// Add service order to user
 		newUser.services.push(serviceOrder);
@@ -1754,6 +1766,14 @@ const convertLeadToOrder = async (req, res) => {
 		lead.convertedAt = new Date();
 		await lead.save();
 		
+		// Prepare email content with package information
+		let packageInfo = '';
+		if (selectedPackage) {
+			packageInfo = `
+- Package: ${selectedPackage.name}
+- Price: ₹${selectedPackage.salePrice || selectedPackage.actualPrice}`;
+		}
+		
 		// Send welcome email to the customer
 		await sendEmail(
 			lead.email,
@@ -1762,16 +1782,23 @@ const convertLeadToOrder = async (req, res) => {
 
 Thank you for choosing TaxHarbor. We are pleased to inform you that your account has been created and your service order has been processed.
 
-Account Details:
-- Username: ${username}
-- Password: ${tempPassword} (Please change this on your first login)
+LOGIN INFORMATION:
+- Email: ${lead.email}
+- Password: ${tempPassword}
 
-Order Details:
+Please go to http://localhost:5173/customers/login to log in with the above credentials.
+
+
+ORDER DETAILS:
 - Order ID: ${orderId}
-- Service: ${lead.serviceId.name}
+- Service: ${lead.serviceId.name}${packageInfo}
+- Payment Amount: ₹${paymentDetails.amount}
+- Payment Method: ${paymentDetails.method}
 - Due Date: ${dueDate.toLocaleDateString()}
 
-You can log in to your dashboard to track your order status and communicate with our team.
+You can track your order status and communicate with our team through your dashboard.
+
+If you have any questions, please contact our support team.
 
 Best regards,
 TaxHarbor Team`
@@ -1785,6 +1812,71 @@ TaxHarbor Team`
 	} catch (error) {
 		console.error('Error converting lead:', error);
 		res.status(500).json({ message: 'Error converting lead', error: error.message });
+	}
+};
+
+// Send an approved lead back to the employee
+const sendLeadBackToEmployee = async (req, res) => {
+	const { leadId, message } = req.body;
+	
+	try {
+		// Find the lead
+		const lead = await Lead.findById(leadId)
+			.populate('serviceId')
+			.populate('assignedToEmployee');
+		
+		if (!lead) {
+			return res.status(404).json({ message: 'Lead not found' });
+		}
+		
+		// Check if lead is already in 'accepted' status
+		if (lead.status !== 'accepted') {
+			return res.status(400).json({ 
+				message: `Only accepted leads can be sent back (current status: ${lead.status})` 
+			});
+		}
+		
+		// Ensure lead is assigned to an employee
+		if (!lead.assignedToEmployee) {
+			return res.status(400).json({ message: 'Lead is not assigned to any employee' });
+		} 
+		
+		// Update lead status back to 'assigned' and add admin note
+		lead.status = 'assigned';
+		lead.adminNote = message || 'Lead sent back by admin for review.';
+		lead.sentBackAt = new Date();
+		
+		await lead.save();
+		
+		// Notify the employee
+		await sendEmail(
+			lead.assignedToEmployee.email,
+			'Lead Requires Review',
+			`Dear ${lead.assignedToEmployee.name},
+
+A lead that you previously approved has been sent back for review by the admin:
+
+Lead Details:
+- Name: ${lead.name}
+- Email: ${lead.email}
+- Mobile: ${lead.mobile}
+- Service: ${lead.serviceId?.name || 'N/A'}
+
+Admin Note: ${lead.adminNote}
+
+Please review this lead in your dashboard and take appropriate action.
+
+Best regards,
+Admin Team`
+		);
+		
+		res.status(200).json({ 
+			message: 'Lead sent back to employee successfully',
+			lead 
+		});
+	} catch (error) {
+		console.error('Error sending lead back to employee:', error);
+		res.status(500).json({ message: 'Error sending lead back to employee', error: error.message });
 	}
 };
 
@@ -1827,5 +1919,6 @@ module.exports = {
 	assignLeadToEmployee,
 	acceptLead,
 	declineLead,
-	convertLeadToOrder
+	convertLeadToOrder,
+	sendLeadBackToEmployee
 };

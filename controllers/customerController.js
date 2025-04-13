@@ -86,7 +86,8 @@ const sendEmail = async (to, subject, text, htmlContent = null) => {
 
 const getCustomerDashboard = async (req, res) => {
 	try {
-		const { userId } = req.user;
+		// Use either userId or _id from the request user object for backward compatibility
+		const userId = req.user.userId || req.user._id;
 
 		// Fetch user with properly populated service details
 		const user = await User.findById(userId)
@@ -120,6 +121,9 @@ const getCustomerDashboard = async (req, res) => {
 			// Explicitly handle requiredDocuments array
 			requiredDocuments: service.serviceId?.requiredDocuments || [],
 			documents: service.documents || [],
+			// Add package information
+			packageName: service.packageName || null,
+			price: service.price || null
 		}));
 
 		res.status(200).json({
@@ -161,9 +165,6 @@ const registerCustomer = async (req, res) => {
 			password,
 			referralCode,
 			serviceId,
-			selectedPackage,
-			processingDays,
-			order_id
 		} = req.body;
 
 		// Generate a referral code for the new user
@@ -202,30 +203,18 @@ const registerCustomer = async (req, res) => {
 
 		// If serviceId is provided, add it to the user's services
 		if (serviceId) {
-			// Get service details
+			// Get service details to check dueDate
 			const service = await Service.findById(serviceId);
 			if (service) {
 				// Generate a custom order ID
-				const orderId = order_id || generateOrderId(newUser._id);
-
-				// Calculate due date based on package processing days
-				const purchaseDate = new Date();
-				const dueDate = new Date(purchaseDate);
-				
-				// Use the package processing days if provided, otherwise use service default
-				const packageProcessingDays = processingDays || 
-					(service.processingDays ? service.processingDays : 7);
-					
-				dueDate.setDate(dueDate.getDate() + packageProcessingDays);
+				const orderId = generateOrderId(newUser._id);
 
 				newUser.services.push({
 					serviceId,
 					orderId,
 					activated: true,
-					purchasedAt: purchaseDate,
-					dueDate: dueDate,
-					packageName: selectedPackage || null, // Store the package name
-					processingDays: packageProcessingDays,
+					purchasedAt: new Date(),
+					dueDate: service.dueDate,
 					requiredDocuments: service.requiredDocuments,
 					documents: [],
 				});
@@ -364,53 +353,48 @@ function generateReferralCode() {
 }
 
 const updateCustomerProfile = async (req, res) => {
-	const { userId } = req.user;
-	const updateFields = req.body;
-
 	try {
+		// Use either userId or _id from the request user object for backward compatibility
+		const userId = req.user.userId || req.user._id;
+		
+		const updateData = req.body;
+
+		// Validate update data
+		if (Object.keys(updateData).length === 0) {
+			return res.status(400).json({ message: "No update data provided" });
+		}
+
+		// Find user and update
 		const user = await User.findById(userId);
 		if (!user) {
 			return res.status(404).json({ message: "User not found" });
 		}
 
-		Object.keys(updateFields).forEach((field) => {
-			if (updateFields[field] !== undefined) {
-				user[field] = updateFields[field];
+		// Update only the provided fields
+		Object.keys(updateData).forEach(key => {
+			// Skip sensitive fields that should not be updated through this endpoint
+			if (!['passwordHash', 'salt', 'role', '_id'].includes(key)) {
+				user[key] = updateData[key];
 			}
 		});
-		console.log("Update Fields:", updateFields);
 
-		const requiredFields = [
-			"pan",
-			"dob",
-			"gst",
-			"address",
-			"city",
-			"state",
-			"country",
-			"postalcode",
-			"natureEmployment",
-			"annualIncome",
-			"education",
-		];
-		user.isProfileComplete = requiredFields.every((field) => user[field]);
+		// Mark profile as complete if this is the first update
+		if (!user.isProfileComplete) {
+			user.isProfileComplete = true;
+		}
 
 		await user.save();
 
-		// Notify user of profile update
-		await sendEmail(
-			user.email,
-			"Profile Updated",
-			"Your profile has been successfully updated."
-		);
-
+		// Return updated user without sensitive information
+		const { passwordHash, salt, ...userWithoutSensitiveInfo } = user.toObject();
+		
 		res.status(200).json({
 			message: "Profile updated successfully",
-			user,
+			user: userWithoutSensitiveInfo
 		});
-	} catch (error) {
-		console.error("Error updating profile:", error);
-		res.status(500).json({ message: "Error updating profile" });
+	} catch (err) {
+		console.error("Error updating profile:", err);
+		res.status(500).json({ message: "Error updating profile", error: err.message });
 	}
 };
 
@@ -427,15 +411,7 @@ const generateOrderId = (userId) => {
 
 const handlePaymentSuccess = async (req, res) => {
 	try {
-		const { 
-			razorpay_payment_id, 
-			amount, 
-			userId, 
-			serviceId, 
-			packageName, 
-			processingDays,
-			order_id
-		} = req.body;
+		const { razorpay_payment_id, amount, userId, serviceId, packageId } = req.body;
 
 		// Initialize Razorpay instance
 		const razorpayInstance = new Razorpay({
@@ -463,14 +439,32 @@ const handlePaymentSuccess = async (req, res) => {
 			return res.status(404).json({ message: "Service not found" });
 		}
 
-		// Find the selected package if provided
-		let selectedPackageDetails = null;
-		if (packageName && service.packages && service.packages.length > 0) {
-			selectedPackageDetails = service.packages.find(pkg => pkg.name === packageName);
+		// Find the selected package if packageId is provided
+		let selectedPackage = null;
+		if (packageId && service.packages && service.packages.length > 0) {
+			selectedPackage = service.packages.find(
+				(pkg) => pkg._id.toString() === packageId
+			);
+			
+			if (!selectedPackage) {
+				return res.status(404).json({ message: "Package not found" });
+			}
 		}
 
+		// Use processing days from the selected package or default to service's first package
+		const processingDays = selectedPackage 
+			? selectedPackage.processingDays 
+			: (service.packages && service.packages.length > 0) 
+				? service.packages[0].processingDays 
+				: 7; // Default to 7 days if no package specified
+
+		// Calculate due date based on processing days
+		const purchaseDate = new Date();
+		const dueDate = new Date(purchaseDate);
+		dueDate.setDate(dueDate.getDate() + processingDays);
+
 		// Generate a custom order ID
-		const orderId = order_id || generateOrderId(userId);
+		const orderId = generateOrderId(userId);
 
 		// Add payment details to payment history
 		const amountInRupees = amount / 100;
@@ -482,26 +476,24 @@ const handlePaymentSuccess = async (req, res) => {
 			paymentMethod: paymentDetails.method,
 		});
 
-		// Calculate due date based on package processing days or service default
-		const purchaseDate = new Date();
-		const dueDate = new Date(purchaseDate);
-		
-		// Use package processing days if provided, otherwise fallback to service default or 7 days
-		const packageProcessingDays = processingDays || 
-			(selectedPackageDetails?.processingDays) || 
-			(service.processingDays) || 7;
-			
-		dueDate.setDate(dueDate.getDate() + packageProcessingDays);
-
-		// Add new service with custom orderId
+		// Add new service with custom orderId and selected package
 		user.services.push({
 			serviceId,
 			orderId: orderId,
+			packageId: packageId || (service.packages && service.packages.length > 0 ? service.packages[0]._id : null),
+			packageName: selectedPackage 
+				? selectedPackage.name 
+				: (service.packages && service.packages.length > 0) 
+					? service.packages[0].name 
+					: null,
+			price: selectedPackage 
+				? (selectedPackage.salePrice || selectedPackage.actualPrice)
+				: (service.packages && service.packages.length > 0)
+					? (service.packages[0].salePrice || service.packages[0].actualPrice)
+					: service.salePrice || service.actualPrice,
 			activated: true,
 			purchasedAt: purchaseDate,
 			dueDate: dueDate,
-			packageName: packageName || null,
-			processingDays: packageProcessingDays,
 			requiredDocuments: service.requiredDocuments,
 			documents: [],
 		});
@@ -516,18 +508,34 @@ const handlePaymentSuccess = async (req, res) => {
 		);
 
 		// Send notification email
-		const packageInfo = packageName ? ` (${packageName} package)` : '';
+		const emailContent = selectedPackage 
+			? `Your payment of Rs.${amountInRupees} for ${service.name} (${selectedPackage.name} package) has been processed successfully.`
+			: `Your payment of Rs.${amountInRupees} for ${service.name} has been processed successfully.`;
+			
 		if (!assignmentResult.success) {
 			await sendEmail(
 				user.email,
 				"Service Purchase Successful",
-				`Your payment of Rs.${amountInRupees} for ${service.name}${packageInfo} has been processed successfully. An employee will be assigned to you shortly.`
+				`${emailContent} An employee will be assigned to you shortly.`
+			);
+		} else {
+			await sendEmail(
+				user.email,
+				"Service Purchase Successful",
+				`${emailContent} ${assignmentResult.employee.name} has been assigned to assist you with your service.`
 			);
 		}
 
 		res.status(200).json({
 			message: "Payment and service added successfully",
 			employeeAssigned: assignmentResult.success,
+			packageDetails: selectedPackage 
+				? { 
+					id: selectedPackage._id,
+					name: selectedPackage.name,
+					processingDays: selectedPackage.processingDays
+				} 
+				: null
 		});
 	} catch (error) {
 		console.error("Error handling payment success:", error);
@@ -553,11 +561,6 @@ const uploadDocuments = async (req, res) => {
 			return res.status(404).json({ message: "User or service not found" });
 		}
 
-		// Calculate due date based on upload date and processing days
-		const uploadDate = new Date();
-		const dueDate = new Date(uploadDate);
-		dueDate.setDate(dueDate.getDate() + service.processingDays);
-
 		// Find the specific service in user's services array
 		const serviceIndex = user.services.findIndex(
 			(s) => s.serviceId.toString() === serviceId
@@ -568,6 +571,24 @@ const uploadDocuments = async (req, res) => {
 				.status(404)
 				.json({ message: "Service not found in user's services" });
 		}
+
+		// Calculate due date based on upload date and processing days
+		const uploadDate = new Date();
+		// Get processing days, default to 7 if not found
+		let processingDays = 7;
+		
+		// Try to get processing days from the service
+		if (service.processingDays) {
+			processingDays = service.processingDays;
+		} 
+		// If not in service, try to get from user's services array
+		else if (user.services[serviceIndex].processingDays) {
+			processingDays = user.services[serviceIndex].processingDays;
+		}
+		
+		// Create a valid due date by adding processing days to the current date
+		const dueDate = new Date();
+		dueDate.setDate(dueDate.getDate() + processingDays);
 
 		// Create user-specific directory
 		const userUploadDir = path.join("uploads", userId);
@@ -635,8 +656,18 @@ const loginUser = async (req, res) => {
 	const { email, password } = req.body;
 
 	try {
-		// Find the user by email
-		const user = await User.findOne({ email });
+		if (!email || !password) {
+			return res.status(400).json({ message: "Email and password are required" });
+		}
+
+		// Find the user by email or username
+		const user = await User.findOne({ 
+			$or: [
+				{ email: email },
+				{ username: email } // Allow login with username in the email field
+			]
+		});
+		
 		if (!user) {
 			return res.status(400).json({ message: "Invalid email or password" });
 		}
@@ -650,7 +681,7 @@ const loginUser = async (req, res) => {
 		// Include additional fields in the token payload (similar to admin)
 		const token = jwt.sign(
 			{
-				_id: user._id, // Use _id for consistency with middleware expectations
+				_id: user._id, // Changed from userId to _id to match the middleware expectations
 				role: user.role, // Role of the user (could be 'customer', 'admin', etc.)
 				name: user.name, // Include the name for additional context if needed
 				email: user.email, // Email for additional context if needed
@@ -660,10 +691,19 @@ const loginUser = async (req, res) => {
 		);
 
 		// Return the token and user details
-		res.status(200).json({ token, user });
+		res.status(200).json({ 
+			token, 
+			user: {
+				_id: user._id,
+				name: user.name,
+				email: user.email,
+				role: user.role,
+				isActive: user.isActive
+			}
+		});
 	} catch (err) {
 		console.error("Error logging in user:", err);
-		res.status(500).json({ message: "Login failed" });
+		res.status(500).json({ message: "Login failed", error: err.message });
 	}
 };
 
@@ -767,7 +807,8 @@ const sendQuery = async (req, res) => {
 
 const getCustomerQueriesWithReplies = async (req, res) => {
 	try {
-		const { userId } = req.user;
+		// Use either userId or _id from the request user object for backward compatibility
+		const userId = req.user.userId || req.user._id;
 
 		if (!userId) {
 			return res.status(400).json({ message: "Invalid user ID" });
@@ -810,21 +851,21 @@ const getCustomerQueriesWithReplies = async (req, res) => {
 };
 
 const submitFeedback = async (req, res) => {
-	const { serviceId, feedback, rating } = req.body;
-	const { userId } = req.user;
-
-	if (!serviceId || !feedback || !rating) {
-		return res
-			.status(400)
-			.json({ message: "Service ID and feedback are required" });
-	}
-
 	try {
+		// Use either userId or _id from the request user object for backward compatibility
+		const userId = req.user.userId || req.user._id;
+		const { serviceId, feedback, rating } = req.body;
+
+		if (!serviceId || !feedback || !rating) {
+			return res.status(400).json({ message: "Missing required fields" });
+		}
+
 		const user = await User.findById(userId);
 		if (!user) {
 			return res.status(404).json({ message: "User not found" });
 		}
 
+		// Find the service in the user's services array
 		const serviceIndex = user.services.findIndex(
 			(service) => service.serviceId.toString() === serviceId
 		);
@@ -833,18 +874,21 @@ const submitFeedback = async (req, res) => {
 			return res.status(404).json({ message: "Service not found" });
 		}
 
-		const newFeedback = {
+		// Add the feedback to the service
+		const feedbackEntry = {
 			feedback,
-			rating,
+			rating: parseInt(rating),
 			createdAt: new Date(),
 		};
 
-		user.services[serviceIndex].feedback =
-			user.services[serviceIndex].feedback || [];
-		user.services[serviceIndex].feedback.push(newFeedback);
+		user.services[serviceIndex].feedback.push(feedbackEntry);
+
 		await user.save();
 
-		res.status(201).json({ message: "Feedback submitted successfully" });
+		res.status(201).json({
+			message: "Feedback submitted successfully",
+			feedback: feedbackEntry,
+		});
 	} catch (error) {
 		console.error("Error submitting feedback:", error);
 		res.status(500).json({ message: "Error submitting feedback" });

@@ -1,6 +1,17 @@
 const mongoose = require("mongoose");
 const { CustomObjectId } = require("../utils/idGenerator");
 
+// Document upload schema
+const leadDocumentSchema = new mongoose.Schema({
+  filename: { type: String, required: true },
+  originalName: { type: String, required: true },
+  path: { type: String, required: true },
+  mimetype: { type: String, required: true },
+  size: { type: Number, required: true },
+  uploadedAt: { type: Date, default: Date.now },
+  description: { type: String }, 
+});
+
 const leadSchema = new mongoose.Schema(
   {
     _id: {
@@ -29,7 +40,7 @@ const leadSchema = new mongoose.Schema(
     },
     status: { 
       type: String, 
-      enum: ["new", "assigned", "accepted", "declined", "converted"], 
+      enum: ["new", "assigned", "accepted", "declined", "converted", "rejected"], 
       default: "new" 
     },
     assignedToEmployee: { 
@@ -46,8 +57,14 @@ const leadSchema = new mongoose.Schema(
     declinedAt: { 
       type: Date 
     },
+    rejectedAt: {
+      type: Date
+    },
     declineReason: { 
       type: String 
+    },
+    rejectReason: {
+      type: String
     },
     convertedToOrderId: { 
       type: String, 
@@ -63,6 +80,25 @@ const leadSchema = new mongoose.Schema(
     },
     notes: { 
       type: String 
+    },
+    // New fields
+    adminNote: {
+      type: String
+    },
+    employeeNotes: [{
+      note: { type: String, required: true },
+      createdAt: { type: Date, default: Date.now }
+    }],
+    documents: [leadDocumentSchema],
+    sentBackAt: {
+      type: Date
+    },
+    paymentDetails: {
+      amount: { type: Number },
+      method: { type: String },
+      reference: { type: String },
+      date: { type: Date },
+      hasEvidence: { type: Boolean, default: false }
     }
   },
   { timestamps: true }

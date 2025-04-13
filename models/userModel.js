@@ -7,7 +7,7 @@ const documentSchema = new mongoose.Schema({
 	originalName: { type: String, required: true },
 	path: { type: String, required: true },
 	mimetype: { type: String, required: true },
-	size: { type: Number, required: true },
+	size: { type: Number, required: true }, 
 	uploadedAt: { type: Date, default: Date.now },
 });
 
@@ -32,19 +32,19 @@ const querySchema = new mongoose.Schema({
 		},
 	],
 	createdAt: { type: Date, default: Date.now },
-});
+}); 
 
 // Define the customer service schema
 const customerServiceSchema = new mongoose.Schema({
 	orderId: { type: String },
 	serviceId: { type: String, ref: "Service", index: true },
+	packageId: { type: mongoose.Schema.Types.ObjectId },
+	packageName: { type: String },
 	activated: { type: Boolean, default: true },
 	purchasedAt: { type: Date, default: Date.now },
 	employeeId: { type: String, ref: "User", index: true },
 	status: { type: String, default: "In Process" },
 	dueDate: { type: Date },
-	packageName: { type: String },  // Store which package was selected
-	processingDays: { type: Number, default: 7 }, // Store the processing days for this service
 	documents: [documentSchema],
 	queries: [querySchema],
 	feedback: [
