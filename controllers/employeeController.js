@@ -294,10 +294,13 @@ const getAssignedCustomers = async (req, res) => {
 	const employeeId = req.user._id; // Extract employee ID from JWT
 
 	try {
-		// Find the employee's assigned customers
+		// Find the employee's assigned customers and get their manager
 		const employee = await User.findById(employeeId).select(
-			"assignedCustomers"
-		);
+			"assignedCustomers L1EmpCode"
+		).populate({
+			path: "L1EmpCode",
+			select: "name"
+		});
 
 		if (!employee) {
 			return res.status(404).json({ message: "Employee not found" });
@@ -308,18 +311,26 @@ const getAssignedCustomers = async (req, res) => {
 		if (!assignedCustomerIds || assignedCustomerIds.length === 0) {
 			return res
 				.status(200)
-				.json({ message: "No customers assigned to this employee" });
+				.json({ message: "No customers assigned to this employee", success: true, customers: [] });
 		}
+
+		// Get manager name
+		const managerName = employee.L1EmpCode ? employee.L1EmpCode.name : null;
 
 		// Fetch customers with their services assigned to this employee
 		const customers = await User.find({
 			_id: { $in: assignedCustomerIds },
 			role: "customer",
-		}).select("name email services");
+		}).select("name email _id state services")
+		.populate({
+			path: "services.serviceId",
+			select: "name description category",
+		});
 
-		// Filter services for the current employee and include orderId
+		// Filter services for the current employee and include all required fields
 		const filteredCustomers = customers
 			.map((customer) => {
+				// Only include services assigned to this employee
 				const relevantServices = customer.services.filter(
 					(service) => service.employeeId?.toString() === employeeId.toString()
 				);
@@ -329,26 +340,46 @@ const getAssignedCustomers = async (req, res) => {
 						_id: customer._id,
 						name: customer.name,
 						email: customer.email,
+						state: customer.state,
+						L1Name: managerName, // Pass the manager's name to each customer
 						services: relevantServices.map((service) => ({
-							orderId: service.orderId, // Include orderId
-							serviceId: service.serviceId,
+							_id: service._id,
+							orderId: service.orderId,
+							serviceId: service.serviceId?._id,
+							serviceName: service.serviceId?.name || "Unknown Service",
+							serviceDescription: service.serviceId?.description || "",
+							serviceCategory: service.serviceId?.category || "",
+							packageName: service.packageName,
 							activated: service.activated,
 							purchasedAt: service.purchasedAt,
 							status: service.status,
 							dueDate: service.dueDate,
+							completionDate: service.completionDate || null,
+							// Include payment and price information
+							price: service.price || 0,
+							paymentAmount: service.paymentAmount || 0,
+							paymentMethod: service.paymentMethod || "N/A",
+							paymentReference: service.paymentReference || null,
+							// Include tax information
+							igst: service.igst || 0,
+							cgst: service.cgst || 0,
+							sgst: service.sgst || 0,
+							discount: service.discount || 0,
+							// Include feedback
+							feedback: service.feedback || [],
+							// Include other relevant fields
+							documents: service.documents?.length || 0,
+							hasDocuments: service.documents?.length > 0,
+							queries: service.queries?.length || 0,
+							hasQueries: service.queries?.length > 0,
+							// Additional fields for delay tracking
+							delayReason: service.delayReason || "",
 						})),
 					};
 				}
 				return null;
 			})
 			.filter((customer) => customer !== null); // Remove null entries
-
-		if (filteredCustomers.length === 0) {
-			return res.status(200).json({
-				message:
-					"No customers assigned to this employee with relevant services.",
-			});
-		}
 
 		return res
 			.status(200)
@@ -938,6 +969,56 @@ ${documentRecords.length} document(s) uploaded. Please review this in the admin 
 	}
 };
 
+// Update service delay reason
+const updateServiceDelayReason = async (req, res) => {
+	try {
+		const employeeId = req.user._id;
+		const { serviceId, delayReason, customerId } = req.body;
+
+		// Input validation
+		if (!serviceId || !customerId) {
+			return res.status(400).json({ message: "Service ID and Customer ID are required" });
+		}
+
+		// Find the customer
+		const customer = await User.findById(customerId);
+		if (!customer) {
+			return res.status(404).json({ message: "Customer not found" });
+		}
+
+		// Find the specific service in the customer's services array
+		const serviceIndex = customer.services.findIndex(
+			(service) => service._id.toString() === serviceId.toString()
+		);
+
+		if (serviceIndex === -1) {
+			return res.status(404).json({ message: "Service not found" });
+		}
+
+		// Check if the service is assigned to this employee
+		if (customer.services[serviceIndex].employeeId.toString() !== employeeId) {
+			return res.status(403).json({ message: "Not authorized to update this service" });
+		}
+
+		// Update the delay reason
+		customer.services[serviceIndex].delayReason = delayReason;
+		
+		// Save the updated customer
+		await customer.save();
+
+		return res.status(200).json({ 
+			message: "Service delay reason updated successfully",
+			delayReason: delayReason
+		});
+	} catch (error) {
+		console.error("Error updating service delay reason:", error);
+		return res.status(500).json({ 
+			message: "Error updating service delay reason",
+			error: error.message
+		});
+	}
+};
+
 module.exports = {
 	updateServiceStatus,
 	getAssignedCustomers,
@@ -950,4 +1031,5 @@ module.exports = {
 	approveLead,
 	rejectLead,
 	uploadLeadDocuments,
+	updateServiceDelayReason,
 };

@@ -61,7 +61,7 @@ const createLead = async (req, res) => {
         try {
             await sendEmail(
                 email,
-                "Thank You for Your Inquiry - TaxHarbor",
+                "Thank You for Your Inquiry - FinShelter",
                 `Dear ${name},
                 
                 Thank you for your interest in our ${service.name} service.
@@ -71,7 +71,7 @@ const createLead = async (req, res) => {
                 If you have any immediate questions, please feel free to contact us.
                 
                 Best regards,
-                TaxHarbor Team`
+                FinShelter Team`
             );
         } catch (emailError) {
             console.error("Error sending acknowledgment email:", emailError);

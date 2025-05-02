@@ -90,7 +90,7 @@ const sendEmail = async (to, subject, text, htmlContent = null) => {
 					<p>${text.replace(/\n/g, "<br>")}</p>
 				</div>
 				<div class="email-footer">
-					<p>© ${new Date().getFullYear()} TaxHarbor. All rights reserved.</p>
+					<p>© ${new Date().getFullYear()} FinShelter. All rights reserved.</p>
 				</div>
 			</div>
 		</body>
@@ -258,6 +258,126 @@ const getAllCustomerOrders = async (req, res) => {
 				},
 			},
 			{
+				$addFields: {
+					// First, ensure we have a valid price - try different sources with fallbacks
+					basePrice: { 
+						$cond: {
+							if: { $gt: [{ $ifNull: ["$services.price", 0] }, 0] },
+							then: "$services.price",
+							else: { 
+								$cond: {
+									if: { $gt: [{ $ifNull: ["$services.paymentAmount", 0] }, 0] },
+									then: "$services.paymentAmount",
+									else: {
+										$cond: {
+											if: { $gt: [{ $size: { $ifNull: ["$serviceDetail.packages", []] } }, 0] },
+											then: { 
+												$ifNull: [
+													{ $arrayElemAt: [{ $map: {
+														input: "$serviceDetail.packages",
+														as: "pkg",
+														in: { 
+															$cond: {
+																if: { $eq: ["$$pkg._id", "$services.packageId"] },
+																then: { $ifNull: ["$$pkg.salePrice", "$$pkg.actualPrice"] },
+																else: null
+															}
+														}
+													}}, 0] },
+													{ $ifNull: [
+														{ $arrayElemAt: ["$serviceDetail.packages.salePrice", 0] },
+														{ $arrayElemAt: ["$serviceDetail.packages.actualPrice", 0] }
+													]}
+												]
+											},
+											else: 0
+										}
+									}
+								}
+							}
+						}
+					},
+					// Get GST rate from service, default to 18% if not specified
+					gstRate: { 
+						$ifNull: ["$services.gstRate", { $ifNull: ["$serviceDetail.gstRate", 18] }]
+					},
+					// Determine if this is an interstate transaction
+					isInterstate: { $ifNull: ["$services.isInterstate", false] }
+				}
+			},
+			{
+				$addFields: {
+					// Now calculate GST based on whether amount includes GST already
+					gstIncluded: { $ifNull: ["$services.gstIncluded", true] },
+					taxableAmount: { 
+						$cond: {
+							if: { $eq: [{ $ifNull: ["$services.gstIncluded", true] }, true] },
+							then: { $divide: ["$basePrice", { $add: [1, { $divide: ["$gstRate", 100] }] }] },
+							else: "$basePrice"
+						}
+					}
+				}
+			},
+			{
+				$addFields: {
+					// Calculate CGST and SGST (half of GST rate each)
+					calculatedCGST: { 
+						$cond: {
+							if: { $eq: ["$isInterstate", true] },
+							then: 0,
+							else: {
+								$multiply: [
+									"$taxableAmount", 
+									{ $divide: ["$gstRate", 200] } // Half of GST rate divided by 100
+								]
+							}
+						}
+					},
+					calculatedSGST: { 
+						$cond: {
+							if: { $eq: ["$isInterstate", true] },
+							then: 0,
+							else: {
+								$multiply: [
+									"$taxableAmount", 
+									{ $divide: ["$gstRate", 200] } // Half of GST rate divided by 100
+								]
+							}
+						}
+					},
+					// For IGST (used in interstate transactions)
+					calculatedIGST: { 
+						$cond: {
+							if: { $eq: ["$isInterstate", true] },
+							then: { 
+								$multiply: [
+									"$taxableAmount", 
+									{ $divide: ["$gstRate", 100] }
+								]
+							},
+							else: 0
+						}
+					},
+					totalTax: {
+						$cond: {
+							if: { $eq: ["$isInterstate", true] },
+							then: { 
+								$multiply: [
+									"$taxableAmount", 
+									{ $divide: ["$gstRate", 100] }
+								]
+							},
+							else: {
+								$multiply: [
+									"$taxableAmount", 
+									{ $divide: ["$gstRate", 100] }
+								]
+							}
+						}
+					}
+				}
+			},
+			{
 				$project: {
 					"Order ID": "$services.orderId",
 					"Order Date": "$services.purchasedAt",
@@ -270,18 +390,70 @@ const getAllCustomerOrders = async (req, res) => {
 					"L1 Employee Code": "$L1EmpCode",
 					"L1 Employee Name": "$L1Name",
 					"Service Name": "$serviceDetail.name",
-					"Service Price": "$serviceDetail.salePrice",
-					Discounts: { $ifNull: ["$services.discount", 0] },
-					"IGST Amount": { $ifNull: ["$services.igst", 0] },
-					"CGST Amount": { $ifNull: ["$services.cgst", 0] },
-					"SGST Amount": { $ifNull: ["$services.sgst", 0] },
+					"Package Name": "$services.packageName",
+					"Service Price": "$taxableAmount", // The base price excluding GST
+					"Discounts": { 
+						$ifNull: ["$services.discount", { 
+							$cond: {
+								if: { $and: [
+									{ $gt: [{ $size: { $ifNull: ["$serviceDetail.packages", []] } }, 0] },
+									{ $ne: ["$services.packageId", null] }
+								]},
+								then: {
+									$subtract: [
+										{ $ifNull: [
+											{ $arrayElemAt: [{ $map: {
+												input: "$serviceDetail.packages",
+												as: "pkg",
+												in: { 
+													$cond: {
+														if: { $eq: ["$$pkg._id", "$services.packageId"] },
+														then: "$$pkg.actualPrice",
+														else: null
+													}
+												}
+											}}, 0] },
+											{ $arrayElemAt: ["$serviceDetail.packages.actualPrice", 0] }
+										]},
+										"$taxableAmount"
+									]
+								},
+								else: 0
+							}
+						}]
+					},
+					"IGST Amount": { 
+						$cond: {
+							if: { $eq: ["$isInterstate", true] },
+							then: "$calculatedIGST",
+							else: { $ifNull: ["$services.igst", 0] }
+						}
+					},
+					"CGST Amount": { 
+						$cond: {
+							if: { $ne: ["$isInterstate", true] },
+							then: "$calculatedCGST",
+							else: { $ifNull: ["$services.cgst", 0] }
+						}
+					},
+					"SGST Amount": { 
+						$cond: {
+							if: { $ne: ["$isInterstate", true] },
+							then: "$calculatedSGST",
+							else: { $ifNull: ["$services.sgst", 0] }
+						}
+					},
 					"Total Order Value": {
-						$sum: [
-							"$serviceDetail.salePrice",
-							{ $ifNull: ["$services.igst", 0] },
-							{ $ifNull: ["$services.cgst", 0] },
-							{ $ifNull: ["$services.sgst", 0] },
-						],
+						$cond: {
+							if: { $gt: [{ $ifNull: ["$services.paymentAmount", 0] }, 0] },
+							then: "$services.paymentAmount", 
+							else: {
+								$add: [
+									"$taxableAmount",
+									"$totalTax"
+								]
+							}
+						}
 					},
 					"Order Status": "$services.status",
 					"Order Completion Date": "$services.completionDate",
@@ -289,23 +461,85 @@ const getAllCustomerOrders = async (req, res) => {
 					"Reason for Delay": "$services.delayReason",
 					"Feedback Status": {
 						$cond: {
-							if: { $gt: [{ $size: "$services.feedback" }, 0] },
+							if: { $gt: [{ $size: { $ifNull: ["$services.feedback", []] } }, 0] },
 							then: "Received",
 							else: "Pending",
 						},
 					},
-					Feedback: { $arrayElemAt: ["$services.feedback.feedback", 0] },
-					Rating: { $arrayElemAt: ["$services.feedback.rating", 0] },
-					"Payment Method": "$paymentHistory.paymentMethod",
-					"Payment Status": "$paymentHistory.status",
-					"Refund Status": "$services.refundStatus",
-					"Razorpay Order ID": "$paymentHistory.paymentId",
+					"Feedback": { 
+						$ifNull: [
+							{ $arrayElemAt: ["$services.feedback.feedback", 0] },
+							""
+						]
+					},
+					"Rating": { 
+						$ifNull: [
+							{ $arrayElemAt: ["$services.feedback.rating", 0] },
+							0
+						]
+					},
+					"Payment Method": { 
+						$ifNull: ["$services.paymentMethod", { $arrayElemAt: ["$paymentHistory.paymentMethod", 0] }]
+					},
+					"Payment Status": { 
+						$cond: {
+							if: { $gt: ["$services.paymentAmount", 0] },
+							then: "success",
+							else: { $ifNull: [{ $arrayElemAt: ["$paymentHistory.status", 0] }, "pending"] }
+						}
+					},
+					"Refund Status": { $ifNull: ["$services.refundStatus", "Not Requested"] },
+					"Razorpay Order ID": { 
+						$ifNull: ["$services.paymentReference", { $arrayElemAt: ["$paymentHistory.paymentId", 0] }]
+					},
 					"Invoice Receipt": "$services.invoiceUrl",
+					// Add raw data for debugging
+					"_rawServicePrice": "$basePrice",
+					"_rawTaxableAmount": "$taxableAmount",
+					"_rawGstRate": "$gstRate",
+					"_rawPackageName": "$services.packageName",
+					"_rawIsInterstate": "$isInterstate",
+					"_rawGstIncluded": "$gstIncluded",
+					"_rawPackageId": "$services.packageId",
+					"_rawPackages": "$serviceDetail.packages",
+					"_rawPaymentAmount": "$services.paymentAmount",
+					"_rawPaymentMethod": "$services.paymentMethod",
+					"_rawFeedback": "$services.feedback",
 				},
 			},
 		]);
 
 		console.log(`Processed ${customers.length} orders`);
+		
+		// Log a sample of the first order for debugging
+		if (customers.length > 0) {
+			console.log("Sample order data:", JSON.stringify({
+				orderId: customers[0]["Order ID"],
+				serviceName: customers[0]["Service Name"],
+				packageName: customers[0]["Package Name"],
+				servicePrice: customers[0]["Service Price"],
+				cgst: customers[0]["CGST Amount"],
+				sgst: customers[0]["SGST Amount"],
+				igst: customers[0]["IGST Amount"],
+				totalValue: customers[0]["Total Order Value"],
+				paymentMethod: customers[0]["Payment Method"],
+				paymentStatus: customers[0]["Payment Status"],
+				feedback: customers[0]["Feedback"],
+				rating: customers[0]["Rating"],
+				_debug: {
+					rawPrice: customers[0]["_rawServicePrice"],
+					rawTaxableAmount: customers[0]["_rawTaxableAmount"],
+					rawGstRate: customers[0]["_rawGstRate"],
+					rawPackageName: customers[0]["_rawPackageName"],
+					rawIsInterstate: customers[0]["_rawIsInterstate"],
+					rawGstIncluded: customers[0]["_rawGstIncluded"],
+					rawPackageId: customers[0]["_rawPackageId"],
+					rawPaymentAmount: customers[0]["_rawPaymentAmount"],
+					rawPaymentMethod: customers[0]["_rawPaymentMethod"],
+					rawFeedback: customers[0]["_rawFeedback"]
+				}
+			}, null, 2));
+		}
 
 		res.status(200).json({
 			success: true,
@@ -1535,7 +1769,7 @@ Lead Details:
 			Please review this lead in your dashboard and take appropriate action.
 			
 			Best regards,
-			TaxHarbor Team`
+			FinShelter Team`
 		);
 		
 		res.status(200).json({ 
@@ -1631,7 +1865,7 @@ const declineLead = async (req, res) => {
 // Convert lead to customer and order
 const convertLeadToOrder = async (req, res) => {
 	const { leadId, paymentDetails } = req.body;
-	const { packageId } = paymentDetails; // Extract packageId from paymentDetails
+	const { packageId, isInterstate } = paymentDetails; // Extract packageId and isInterstate flag
 	
 	try {
 		// Find the lead
@@ -1733,6 +1967,56 @@ const convertLeadToOrder = async (req, res) => {
 		
 		dueDate.setDate(dueDate.getDate() + processingDays);
 		
+		// Get the base price from payment details or package
+		let basePrice = 0;
+		if (paymentDetails && paymentDetails.amount) {
+			basePrice = parseFloat(paymentDetails.amount);
+		} else if (selectedPackage) {
+			basePrice = selectedPackage.salePrice || selectedPackage.actualPrice;
+		}
+		
+		// Get GST rate from service, default to 18% if not specified
+		const gstRate = lead.serviceId.gstRate || 18;
+		
+		// Calculate GST amounts
+		let cgst = 0, sgst = 0, igst = 0;
+		
+		// If payment amount includes GST, back-calculate the base amount and taxes
+		const paymentIncludesGST = true; // This could be a parameter from the request
+		
+		if (paymentIncludesGST) {
+			// If the payment amount includes GST, calculate the base amount
+			const gstFactor = 1 + (gstRate / 100);
+			const baseAmount = basePrice / gstFactor;
+			const totalGST = basePrice - baseAmount;
+			
+			if (isInterstate) {
+				igst = totalGST;
+			} else {
+				cgst = totalGST / 2;
+				sgst = totalGST / 2;
+			}
+		} else {
+			// If the payment amount is the base amount, calculate taxes on top
+			if (isInterstate) {
+				igst = basePrice * (gstRate / 100);
+			} else {
+				cgst = basePrice * (gstRate / 200); // Half of GST rate
+				sgst = basePrice * (gstRate / 200); // Half of GST rate
+			}
+		}
+		
+		// Log the tax calculations for debugging
+		console.log(`Tax Calculation for Order ${orderId}:`, {
+			basePrice,
+			gstRate,
+			isInterstate,
+			cgst, 
+			sgst,
+			igst,
+			total: basePrice + (isInterstate ? igst : (cgst + sgst))
+		});
+		
 		// Create service order with package information if available
 		const serviceOrder = {
 			orderId,
@@ -1744,16 +2028,24 @@ const convertLeadToOrder = async (req, res) => {
 			dueDate,
 			documents: [],
 			queries: [],
-			paymentAmount: parseFloat(paymentDetails.amount) || 0,
+			// Add payment details to the service order
+			paymentAmount: basePrice,
 			paymentMethod: paymentDetails.method || 'cash',
-			paymentReference: paymentDetails.reference || ''
+			paymentReference: paymentDetails.reference || '',
+			price: basePrice,
+			// Add tax information
+			isInterstate: !!isInterstate,
+			cgst: cgst,
+			sgst: sgst,
+			igst: igst,
+			gstRate: gstRate,
+			gstIncluded: paymentIncludesGST
 		};
 		
 		// Add package details if a package was selected
 		if (selectedPackage) {
 			serviceOrder.packageId = selectedPackage._id;
 			serviceOrder.packageName = selectedPackage.name;
-			serviceOrder.price = selectedPackage.salePrice || selectedPackage.actualPrice;
 		}
 		
 		// Add service order to user
@@ -1766,21 +2058,26 @@ const convertLeadToOrder = async (req, res) => {
 		lead.convertedAt = new Date();
 		await lead.save();
 		
-		// Prepare email content with package information
+		// Prepare email content with package information and tax details
 		let packageInfo = '';
 		if (selectedPackage) {
 			packageInfo = `
 - Package: ${selectedPackage.name}
-- Price: ₹${selectedPackage.salePrice || selectedPackage.actualPrice}`;
+- Base Price: ₹${basePrice.toFixed(2)}`;
 		}
+		
+		const taxInfo = isInterstate ? 
+			`- IGST (${gstRate}%): ₹${igst.toFixed(2)}` : 
+			`- CGST (${gstRate/2}%): ₹${cgst.toFixed(2)}
+- SGST (${gstRate/2}%): ₹${sgst.toFixed(2)}`;
 		
 		// Send welcome email to the customer
 		await sendEmail(
 			lead.email,
-			'Welcome to TaxHarbor - Your Account and Order Details',
+			'Welcome to FinShelter - Your Account and Order Details',
 			`Dear ${lead.name},
 
-Thank you for choosing TaxHarbor. We are pleased to inform you that your account has been created and your service order has been processed.
+Thank you for choosing FinShelter. We are pleased to inform you that your account has been created and your service order has been processed.
 
 LOGIN INFORMATION:
 - Email: ${lead.email}
@@ -1792,7 +2089,8 @@ Please go to http://localhost:5173/customers/login to log in with the above cred
 ORDER DETAILS:
 - Order ID: ${orderId}
 - Service: ${lead.serviceId.name}${packageInfo}
-- Payment Amount: ₹${paymentDetails.amount}
+${taxInfo}
+- Total Payment Amount: ₹${basePrice.toFixed(2)}
 - Payment Method: ${paymentDetails.method}
 - Due Date: ${dueDate.toLocaleDateString()}
 
@@ -1801,7 +2099,7 @@ You can track your order status and communicate with our team through your dashb
 If you have any questions, please contact our support team.
 
 Best regards,
-TaxHarbor Team`
+FinShelter Team`
 		);
 		
 		res.status(200).json({

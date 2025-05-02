@@ -56,7 +56,7 @@ const sendEmail = async (to, subject, text, htmlContent = null) => {
 							<tr>
 								<td style="background-color: #95b8a2; color: white; padding: 15px; text-align: center;">
 									<p style="margin: 0; font-size: 12px; color: white;">
-										© ${new Date().getFullYear()} TaxHarbor. All rights reserved.
+										© ${new Date().getFullYear()} FinShelter. All rights reserved.
 										<br />
 										<a href="#" style="color: white; text-decoration: none;">Unsubscribe</a>
 									</p>
@@ -88,43 +88,130 @@ const getCustomerDashboard = async (req, res) => {
 	try {
 		// Use either userId or _id from the request user object for backward compatibility
 		const userId = req.user.userId || req.user._id;
+		
+		console.log("Fetching dashboard for user:", userId);
 
 		// Fetch user with properly populated service details
 		const user = await User.findById(userId)
 			.populate({
 				path: "services.serviceId",
-				select: "name description requiredDocuments dueDate", // Explicitly include requiredDocuments
+				select: "name description requiredDocuments dueDate price salePrice gstRate", // Added price, salePrice, gstRate
 			})
 			.populate({
 				path: "services.employeeId",
-				select: "name email",
+				select: "name email", 
 			})
 			.select("-passwordHash -salt");
 
 		if (!user) {
 			return res.status(404).json({ message: "User not found" });
 		}
+		
+		console.log("User services count:", user.services.length);
 
-		// Format services with explicit handling of requiredDocuments
-		const formattedServices = user.services.map((service) => ({
-			orderId: service.orderId || "N/A",
-			serviceId: service.serviceId?._id,
-			serviceName: service.serviceId?.name || "Unknown Service",
-			serviceDescription: service.serviceId?.description || "No Description",
-			status: service.status || "In Process",
-			activationStatus: service.activated ? "Active" : "Inactive",
-			purchasedAt: service.purchasedAt,
-			dueDate: service.serviceId?.dueDate || service.dueDate,
-			managedBy: service.employeeId
-				? `${service.employeeId.name} (${service.employeeId.email})`
-				: "Unassigned",
-			// Explicitly handle requiredDocuments array
-			requiredDocuments: service.serviceId?.requiredDocuments || [],
-			documents: service.documents || [],
-			// Add package information
-			packageName: service.packageName || null,
-			price: service.price || null
-		}));
+		// Format services with explicit handling of all fields
+		const formattedServices = user.services.map((service) => {
+			// Get the price first - this ensures we have a valid base for calculations
+			const price = service.price || service.serviceId?.salePrice || service.serviceId?.price || 0;
+			
+			// Check if tax values already exist in the service
+			let igst = service.igst || 0;
+			let cgst = service.cgst || 0;
+			let sgst = service.sgst || 0;
+			
+			// If total GST is zero and we have a gstRate, calculate it
+			if ((igst + cgst + sgst === 0) && service.serviceId?.gstRate) {
+				const gstRate = service.serviceId.gstRate || 18; // Default 18% if not specified
+				const totalGstAmount = (price * gstRate) / 100;
+				
+				// Determine if this is an inter-state transaction
+				// For demonstration, check if user's state is different from company state
+				// or if isInterstate flag is explicitly set
+				const companyState = "Delhi"; // This should come from your config
+				const userState = user.state || "Unknown";
+				const isInterstate = service.isInterstate || (userState !== companyState);
+				
+				console.log(`Tax calculation for service ${service._id}:`, { 
+					price, 
+					gstRate, 
+					isInterstate,
+					userState, 
+					companyState 
+				});
+				
+				if (isInterstate) {
+					// Inter-state transaction: all tax as IGST
+					igst = totalGstAmount;
+					cgst = 0;
+					sgst = 0;
+				} else {
+					// Intra-state transaction: split between CGST and SGST
+					igst = 0;
+					cgst = totalGstAmount / 2;
+					sgst = totalGstAmount / 2;
+				}
+			}
+			
+			// Extract employee information
+			const employeeName = service.employeeId ? service.employeeId.name : null;
+			const employeeEmail = service.employeeId ? service.employeeId.email : null;
+			
+			console.log("Processing service:", {
+				id: service._id,
+				name: service.serviceId?.name,
+				employeeId: service.employeeId?._id,
+				employeeName,
+				price: price,
+				igst: igst,
+				cgst: cgst,
+				sgst: sgst,
+				total: price + igst + cgst + sgst
+			});
+			
+			return {
+				orderId: service.orderId || "N/A",
+				serviceId: service.serviceId?._id,
+				serviceName: service.serviceId?.name || "Unknown Service",
+				serviceDescription: service.serviceId?.description || "No Description",
+				status: service.status || "In Process",
+				activationStatus: service.activated ? "Active" : "Inactive",
+				purchasedAt: service.purchasedAt,
+				dueDate: service.serviceId?.dueDate || service.dueDate,
+				
+				// Employee information
+				employeeId: service.employeeId?._id || null,
+				employeeName: employeeName,
+				employeeEmail: employeeEmail,
+				managedBy: employeeName 
+					? `${employeeName}${employeeEmail ? ` (${employeeEmail})` : ''}`
+					: "Unassigned",
+				
+				// Document information
+				requiredDocuments: service.serviceId?.requiredDocuments || [],
+				documents: service.documents || [],
+				
+				// Package & Payment information
+				packageName: service.packageName || null,
+				price: price,
+				paymentAmount: service.paymentAmount || price || 0,
+				paymentMethod: service.paymentMethod || "N/A",
+				paymentReference: service.paymentReference || null,
+				
+				// Tax information
+				igst: igst,
+				cgst: cgst,
+				sgst: sgst,
+				discount: service.discount || 0,
+				
+				// Status information
+				completionDate: service.completionDate || null,
+				
+				// Feedback information
+				feedback: service.feedback || []
+			};
+		});
+		
+		console.log("Formatted services count:", formattedServices.length);
 
 		res.status(200).json({
 			message: "Customer dashboard data fetched successfully",
@@ -411,7 +498,7 @@ const generateOrderId = (userId) => {
 
 const handlePaymentSuccess = async (req, res) => {
 	try {
-		const { razorpay_payment_id, amount, userId, serviceId, packageId } = req.body;
+		const { razorpay_payment_id, amount, userId, serviceId, packageId, order_id } = req.body;
 
 		// Initialize Razorpay instance
 		const razorpayInstance = new Razorpay({
@@ -451,6 +538,76 @@ const handlePaymentSuccess = async (req, res) => {
 			}
 		}
 
+		// Calculate base price based on package or service
+		const basePrice = selectedPackage 
+			? (selectedPackage.salePrice || selectedPackage.actualPrice)
+			: (service.packages && service.packages.length > 0)
+				? (service.packages[0].salePrice || service.packages[0].actualPrice)
+				: service.salePrice || service.actualPrice;
+
+		// Get GST rate from service (default to 18% if not specified)
+		const gstRate = service.gstRate || 18;
+		
+		// Check if the provided amount already includes GST or if it's the base amount
+		// For safety, we'll recalculate everything
+		const amountInRupees = amount / 100;
+		
+		// For demo purposes, set this to true if payment is including taxes, false if it's excluding
+		const paymentIncludesGST = true;
+		
+		// Calculate GST amounts
+		let igst = 0, cgst = 0, sgst = 0;
+		let taxableAmount = basePrice;
+		
+		// Determine if this is an inter-state transaction
+		// For demonstration, check if user's state is different from company state
+		const companyState = "Delhi"; // This should come from your config
+		const userState = user.state || "Unknown";
+		const isInterstate = userState !== companyState;
+		
+		if (paymentIncludesGST) {
+			// If the payment amount includes GST, back-calculate the base amount
+			const gstFactor = 1 + (gstRate / 100);
+			taxableAmount = basePrice / gstFactor;
+			const totalGST = basePrice - taxableAmount;
+			
+			if (isInterstate) {
+				igst = totalGST;
+				cgst = 0;
+				sgst = 0;
+			} else {
+				igst = 0;
+				cgst = totalGST / 2;
+				sgst = totalGST / 2;
+			}
+		} else {
+			// If the payment amount is the base amount (excluding GST)
+			taxableAmount = basePrice;
+			if (isInterstate) {
+				igst = basePrice * (gstRate / 100);
+				cgst = 0;
+				sgst = 0;
+			} else {
+				igst = 0;
+				cgst = basePrice * (gstRate / 200); // Half of GST rate
+				sgst = basePrice * (gstRate / 200); // Half of GST rate
+			}
+		}
+		
+		// Log the tax calculations for debugging
+		console.log(`Tax Calculation for payment ${razorpay_payment_id}:`, {
+			basePrice,
+			gstRate,
+			isInterstate,
+			userState,
+			companyState,
+			taxableAmount,
+			igst,
+			cgst,
+			sgst,
+			totalWithTax: taxableAmount + igst + cgst + sgst
+		});
+
 		// Use processing days from the selected package or default to service's first package
 		const processingDays = selectedPackage 
 			? selectedPackage.processingDays 
@@ -464,10 +621,9 @@ const handlePaymentSuccess = async (req, res) => {
 		dueDate.setDate(dueDate.getDate() + processingDays);
 
 		// Generate a custom order ID
-		const orderId = generateOrderId(userId);
+		const orderId = order_id || generateOrderId(userId);
 
 		// Add payment details to payment history
-		const amountInRupees = amount / 100;
 		user.paymentHistory.push({
 			paymentId: razorpay_payment_id,
 			amount: amountInRupees,
@@ -486,11 +642,19 @@ const handlePaymentSuccess = async (req, res) => {
 				: (service.packages && service.packages.length > 0) 
 					? service.packages[0].name 
 					: null,
-			price: selectedPackage 
-				? (selectedPackage.salePrice || selectedPackage.actualPrice)
-				: (service.packages && service.packages.length > 0)
-					? (service.packages[0].salePrice || service.packages[0].actualPrice)
-					: service.salePrice || service.actualPrice,
+			price: taxableAmount, // Store the price excluding GST
+			paymentAmount: amountInRupees, // Store the total amount paid
+			paymentMethod: paymentDetails.method,
+			paymentReference: razorpay_payment_id,
+			
+			// Tax information
+			igst: igst,
+			cgst: cgst,
+			sgst: sgst,
+			gstRate: gstRate,
+			gstIncluded: paymentIncludesGST,
+			isInterstate: isInterstate,
+			
 			activated: true,
 			purchasedAt: purchaseDate,
 			dueDate: dueDate,
@@ -512,17 +676,30 @@ const handlePaymentSuccess = async (req, res) => {
 			? `Your payment of Rs.${amountInRupees} for ${service.name} (${selectedPackage.name} package) has been processed successfully.`
 			: `Your payment of Rs.${amountInRupees} for ${service.name} has been processed successfully.`;
 			
+		// Add tax details to email
+		const taxDetails = `
+Base amount: ₹${taxableAmount.toFixed(2)}
+${isInterstate 
+    ? `IGST (${gstRate}%): ₹${igst.toFixed(2)}` 
+    : `CGST (${gstRate/2}%): ₹${cgst.toFixed(2)}
+SGST (${gstRate/2}%): ₹${sgst.toFixed(2)}`}
+Total amount: ₹${amountInRupees.toFixed(2)}`;
+		
 		if (!assignmentResult.success) {
 			await sendEmail(
 				user.email,
 				"Service Purchase Successful",
-				`${emailContent} An employee will be assigned to you shortly.`
+				`${emailContent} An employee will be assigned to you shortly.
+
+${taxDetails}`
 			);
 		} else {
 			await sendEmail(
 				user.email,
 				"Service Purchase Successful",
-				`${emailContent} ${assignmentResult.employee.name} has been assigned to assist you with your service.`
+				`${emailContent} ${assignmentResult.employee.name} has been assigned to assist you with your service.
+
+${taxDetails}`
 			);
 		}
 
@@ -535,7 +712,14 @@ const handlePaymentSuccess = async (req, res) => {
 					name: selectedPackage.name,
 					processingDays: selectedPackage.processingDays
 				} 
-				: null
+				: null,
+			taxDetails: {
+				taxableAmount,
+				igst,
+				cgst,
+				sgst,
+				total: amountInRupees
+			}
 		});
 	} catch (error) {
 		console.error("Error handling payment success:", error);
@@ -709,13 +893,13 @@ const loginUser = async (req, res) => {
 
 // Razorpay Payment Integration
 const initiatePayment = async (req, res) => {
-	const { amount, currency } = req.body;
+	const { amount, currency, serviceId, packageId, notes } = req.body;
 
 	try {
 		// Initialize Razorpay instance with credentials from environment variables
 		const razorpayInstance = new Razorpay({
-			key_id: process.env.RAZORPAY_KEY_ID, // This will now be loaded from .env
-			key_secret: process.env.RAZORPAY_KEY_SECRET, // This will now be loaded from .env
+			key_id: process.env.RAZORPAY_KEY_ID,
+			key_secret: process.env.RAZORPAY_KEY_SECRET,
 		});
 
 		// Check if the keys are loaded properly
@@ -725,17 +909,70 @@ const initiatePayment = async (req, res) => {
 				.json({ message: "Razorpay keys are not properly set" });
 		}
 
+		// If serviceId is provided, fetch service details
+		let serviceDetails = null;
+		let gstInfo = {};
+		
+		if (serviceId) {
+			const service = await Service.findById(serviceId);
+			if (service) {
+				serviceDetails = {
+					name: service.name,
+					gstRate: service.gstRate || 18
+				};
+				
+				// Find package if packageId is provided
+				let selectedPackage = null;
+				if (packageId && service.packages && service.packages.length > 0) {
+					selectedPackage = service.packages.find(pkg => pkg._id.toString() === packageId);
+					if (selectedPackage) {
+						serviceDetails.packageName = selectedPackage.name;
+					}
+				}
+				
+				// Calculate base amount and GST
+				const baseAmount = amount;
+				const gstAmount = (baseAmount * serviceDetails.gstRate) / 100;
+				const totalAmount = Math.round(baseAmount + gstAmount);
+				
+				gstInfo = {
+					baseAmount,
+					gstRate: serviceDetails.gstRate,
+					gstAmount,
+					totalAmount
+				};
+				
+				console.log("Payment calculation:", gstInfo);
+			}
+		}
+
+		// Create order with the calculated amount or the provided amount
+		const orderAmount = gstInfo.totalAmount ? gstInfo.totalAmount : amount;
+		
 		// Create order
 		const order = await razorpayInstance.orders.create({
-			amount: amount * 100, // Razorpay expects amount in paise
+			amount: orderAmount * 100, // Razorpay expects amount in paise
 			currency: currency || "INR",
 			payment_capture: 1,
+			notes: {
+				...notes,
+				serviceId: serviceId || '',
+				packageId: packageId || '',
+				baseAmount: gstInfo.baseAmount || amount,
+				gstRate: gstInfo.gstRate || 18,
+				gstAmount: gstInfo.gstAmount || 0
+			}
 		});
-
-		res.json({ order });
+		
+		// Return order with tax details
+		res.json({ 
+			order,
+			serviceDetails,
+			gstInfo
+		});
 	} catch (error) {
 		console.error("Error initiating payment:", error);
-		res.status(500).json({ message: "Error initiating payment" });
+		res.status(500).json({ message: "Error initiating payment", error: error.message });
 	}
 };
 

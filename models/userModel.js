@@ -7,7 +7,7 @@ const documentSchema = new mongoose.Schema({
 	originalName: { type: String, required: true },
 	path: { type: String, required: true },
 	mimetype: { type: String, required: true },
-	size: { type: Number, required: true }, 
+	size: { type: Number, required: true },
 	uploadedAt: { type: Date, default: Date.now },
 });
 
@@ -32,7 +32,7 @@ const querySchema = new mongoose.Schema({
 		},
 	],
 	createdAt: { type: Date, default: Date.now },
-}); 
+});
 
 // Define the customer service schema
 const customerServiceSchema = new mongoose.Schema({
@@ -45,6 +45,7 @@ const customerServiceSchema = new mongoose.Schema({
 	employeeId: { type: String, ref: "User", index: true },
 	status: { type: String, default: "In Process" },
 	dueDate: { type: Date },
+	completionDate: { type: Date },
 	documents: [documentSchema],
 	queries: [querySchema],
 	feedback: [
@@ -54,6 +55,21 @@ const customerServiceSchema = new mongoose.Schema({
 			createdAt: { type: Date, default: Date.now },
 		},
 	],
+	// Payment and pricing fields
+	price: { type: Number },
+	paymentAmount: { type: Number },
+	paymentMethod: { type: String },
+	paymentReference: { type: String },
+	// Tax fields
+	igst: { type: Number, default: 0 },
+	cgst: { type: Number, default: 0 },
+	sgst: { type: Number, default: 0 },
+	gstRate: { type: Number, default: 18 },
+	gstIncluded: { type: Boolean, default: true },
+	discount: { type: Number, default: 0 },
+	isInterstate: { type: Boolean, default: false },
+	// Delay tracking
+	delayReason: { type: String, default: "" },
 });
 
 // Define schema for payment history

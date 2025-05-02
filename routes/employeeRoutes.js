@@ -18,6 +18,7 @@ const {
 	approveLead,
 	rejectLead,
 	uploadLeadDocuments,
+	updateServiceDelayReason,
 } = require("../controllers/employeeController");
 
 // Configure multer for file uploads
@@ -59,5 +60,7 @@ router.get("/assigned-leads", authMiddleware, getAssignedLeads);
 router.post("/approve-lead/:leadId", authMiddleware, approveLead);
 router.put("/leads/:leadId/reject", authMiddleware, rejectLead);
 router.post("/leads/:leadId/documents", authMiddleware, upload.array('documents', 5), uploadLeadDocuments);
+
+router.post("/update-delay-reason", authMiddleware, updateServiceDelayReason);
 
 module.exports = router;
