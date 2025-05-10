@@ -12,7 +12,6 @@ const {
 } = require("../utils/customerAssignment");
 const { handleReferral } = require("./walletController");
 const Wallet = require("../models/walletModel");
-const bcrypt = require("bcrypt");
 const { CustomObjectId } = require("../utils/idGenerator");
 
 const hashPassword = (password, salt) => {
