@@ -26,6 +26,7 @@ const {
 	updateBankDetails,
 	registerFlexiCustomer,
 	processFlexiFunnelRedirect,
+	googleRegister,
 } = require("../controllers/customerController");
 
 // const customerAuthMiddleware = require('../middlewares/customerAuthMiddleware');
@@ -40,6 +41,7 @@ router.get("/user-services/:serviceId", getServiceById);
 // Customer registration
 router.post("/user-register", registerCustomer);
 router.post("/flexi-register", registerFlexiCustomer);
+router.post("/google-register", googleRegister);
 // Customer login
 router.post("/user-login", loginUser);
 

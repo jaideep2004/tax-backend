@@ -12,6 +12,8 @@ const {
 } = require("../utils/customerAssignment");
 const { handleReferral } = require("./walletController");
 const Wallet = require("../models/walletModel");
+const bcrypt = require("bcrypt");
+const { CustomObjectId } = require("../utils/idGenerator");
 
 const hashPassword = (password, salt) => {
 	const hash = crypto.createHmac("sha256", salt);
@@ -1242,6 +1244,110 @@ const processFlexiFunnelRedirect = async (req, res) => {
 	}
 };
 
+// Google Registration
+const googleRegister = async (req, res) => {
+	try {
+		const { name, email, googleId, avatarUrl } = req.body;
+
+		// Validate required fields
+		if (!name || !email || !googleId) {
+			return res.status(400).json({ message: "Name, email, and Google ID are required" });
+		}
+
+		// Check if user already exists with this Google ID
+		let user = await User.findOne({ googleId });
+
+		// If not found by googleId, check by email
+		if (!user) {
+			user = await User.findOne({ email });
+		}
+
+		// If user exists, update Google ID and return user data
+		if (user) {
+			// Update the existing user's Google ID if they didn't have one
+			if (!user.googleId) {
+				user.googleId = googleId;
+				user.avatarUrl = avatarUrl || user.avatarUrl;
+				await user.save();
+			} 
+
+			// Generate token for the existing user
+			const token = jwt.sign(
+				{ userId: user._id, role: user.role },
+				process.env.JWT_SECRET,
+				{ expiresIn: "30d" }
+			);
+
+			return res.status(200).json({
+				userId: user._id,
+				name: user.name,
+				email: user.email,
+				role: user.role,
+				token,
+			});
+		}
+
+		// If user doesn't exist, create a new one
+		// Generate a random password for Google users
+		const randomPassword = Math.random().toString(36).slice(-8);
+		const salt = crypto.randomBytes(16).toString("hex");
+		const passwordHash = hashPassword(randomPassword, salt);
+		
+		// Generate a custom ID for the new user - required by schema
+		const customId = await CustomObjectId.generate("CUS");
+		
+		// Create new customer
+		const newUser = new User({
+			_id: customId,  // Set the custom ID explicitly
+			name,
+			email,
+			passwordHash,
+			salt,
+			googleId,
+			avatarUrl: avatarUrl || "",
+			role: "customer",
+			isActive: true,
+			isVerified: true, // Google users are considered verified
+			leadSource: "google-auth",
+		});
+
+		const createdUser = await newUser.save();
+
+		// Generate token
+		const token = jwt.sign(
+			{ userId: createdUser._id, role: createdUser.role },
+			process.env.JWT_SECRET,
+			{ expiresIn: "30d" }
+		);
+
+		// Send welcome email to the user
+		try {
+			await sendEmail(
+				email,
+				"Welcome to Tax-Buddy!",
+				`Welcome to Tax-Buddy, ${name}!\n\nThank you for registering with us using Google Sign-In.\nYou can now access all our services and manage your account.\nIf you have any questions, feel free to contact our support team.\n\nBest Regards,\nThe Tax-Buddy Team`
+			);
+		} catch (emailError) {
+			console.error("Error sending welcome email:", emailError);
+			// Continue registration process even if email fails
+		}
+
+		return res.status(201).json({
+			userId: createdUser._id,
+			name: createdUser.name,
+			email: createdUser.email,
+			role: createdUser.role,
+			token,
+		});
+	} catch (error) {
+		console.error("Google registration error:", error);
+		return res.status(500).json({ 
+			message: "Server error during Google registration",
+			error: error.message
+		});
+	}
+};
+
 module.exports = {
 	registerCustomer,
 	loginUser,
@@ -1261,4 +1367,6 @@ module.exports = {
 	getCustomerQueriesWithReplies,
 	submitFeedback,
 	updateBankDetails,
+
+	googleRegister,
 };

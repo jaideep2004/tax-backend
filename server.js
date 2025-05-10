@@ -5,6 +5,7 @@ const adminRoutes = require("./routes/adminRoutes");
 const customerRoutes = require("./routes/customerRoutes");
 const messageRoutes = require("./routes/messageRoutes");
 const employeeRoutes = require("./routes/employeeRoutes");
+const contactRoutes = require("./routes/contactRoutes");
 const cors = require("cors");
 const path = require("path");
 const https = require("https");
@@ -18,15 +19,16 @@ app.use(cors());
 
 app.use(express.json()); // Middleware to parse JSON
 app.use("/api/admin", adminRoutes); // Admin routes
-app.use("/api/customers", customerRoutes); // Admin routes
-app.use("/api/messages", messageRoutes); // Admin routes
+app.use("/api/customers", customerRoutes); // Customer routes
+app.use("/api/messages", messageRoutes); // Message routes
 app.use("/api/employees", employeeRoutes); // Employee routes
+app.use("/api/contact", contactRoutes); // Contact form routes
 
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const PORT = process.env.PORT || 8000;
 
 app.get("/", (req, res) => {
-	res.send("TAXHARBOR BACKEND 2 MAY!!");
+	res.send("FINSHELTER backend 10 MAY!!");
 });
 
 // app.listen(PORT, () => {

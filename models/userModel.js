@@ -253,8 +253,15 @@ const userSchema = new mongoose.Schema(
 		lastname: { type: String },
 		email: { type: String, required: true, unique: true },
 		username: { type: String },
-		passwordHash: { type: String, required: true },
-		salt: { type: String, required: true },
+		passwordHash: { type: String, required: function() {
+			return !this.googleId; // Only required if no googleId is provided
+		}},
+		salt: { type: String, required: function() {
+			return !this.googleId; // Only required if no googleId is provided
+		}},
+		// Google authentication fields
+		googleId: { type: String, unique: true, sparse: true },
+		avatarUrl: { type: String },
 		role: {
 			type: String,
 			enum: ["admin", "manager", "employee", "customer"],
@@ -292,7 +299,7 @@ const userSchema = new mongoose.Schema(
 		},
 		leadSource: {
 			type: String,
-			enum: ["flexfunneli", "website", "referral", "other"],
+			enum: ["flexfunneli", "website", "referral", "other", "google-auth"],
 			default: "website",
 		},
 	},
