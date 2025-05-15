@@ -27,6 +27,10 @@ const {
 	registerFlexiCustomer,
 	processFlexiFunnelRedirect,
 	googleRegister,
+	// Add the new controller functions for password reset
+	forgotPassword,
+	resetPassword,
+	verifyResetToken,
 } = require("../controllers/customerController");
 
 // const customerAuthMiddleware = require('../middlewares/customerAuthMiddleware');
@@ -44,6 +48,11 @@ router.post("/flexi-register", registerFlexiCustomer);
 router.post("/google-register", googleRegister);
 // Customer login
 router.post("/user-login", loginUser);
+
+// Password reset routes
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
+router.get("/verify-reset-token/:token", verifyResetToken);
 
 // Initiate payment
 router.post("/user-payment", initiatePayment);

@@ -13,6 +13,7 @@ const {
 const { handleReferral } = require("./walletController");
 const Wallet = require("../models/walletModel");
 const { CustomObjectId } = require("../utils/idGenerator");
+const { sendEmail } = require("../utils/emailUtils");
 
 const hashPassword = (password, salt) => {
 	const hash = crypto.createHmac("sha256", salt);
@@ -28,63 +29,6 @@ const transporter = nodemailer.createTransport({
 	},
 });
 
-const sendEmail = async (to, subject, text, htmlContent = null) => {
-	try {
-		// Default HTML template with robust inline styles
-		const defaultHtmlContent = `
-		<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-		<html xmlns="http://www.w3.org/1999/xhtml" style="font-family: 'Poppins', Arial, sans-serif;">
-		<head>
-			<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-			<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-			<title>${subject}</title>
-		</head>
-		<body style="margin: 0; padding: 0; font-family: 'Poppins', Arial, sans-serif; background-color: #f4f4f4;">
-			<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f4f4f4;">
-				<tr>
-					<td style="padding: 20px 0;">
-						<table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="border-collapse: collapse; background-color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-							<tr>
-								<td style="background-color: #1b321d; color: white; padding: 20px; text-align: center;">
-									<h1 style="margin: 0; color: white; font-size: 24px;">${subject}</h1>
-								</td>
-							</tr>
-							<tr>
-								<td style="padding: 30px; background-color: white; color: #333; line-height: 1.6;">
-									<p style="margin: 0 0 20px 0; white-space: pre-wrap;">${text}</p>
-								</td>
-							</tr>
-							<tr>
-								<td style="background-color: #95b8a2; color: white; padding: 15px; text-align: center;">
-									<p style="margin: 0; font-size: 12px; color: white;">
-										© ${new Date().getFullYear()} FinShelter. All rights reserved.
-										<br />
-										<a href="#" style="color: white; text-decoration: none;">Unsubscribe</a>
-									</p>
-								</td>
-							</tr>
-						</table>
-					</td>
-				</tr>
-			</table>
-		</body>
-		</html>
-		`;
-
-		// Send email with either custom or default HTML template
-		await transporter.sendMail({
-			from: process.env.EMAIL_USER,
-			to,
-			subject,
-			text, // Plain text version
-			html: htmlContent || defaultHtmlContent, // Use custom HTML or default template
-		});
-		console.log(`Email sent to ${to}`);
-	} catch (error) {
-		console.error(`Failed to send email to ${to}:`, error);
-	}
-};
-
 const getCustomerDashboard = async (req, res) => {
 	try {
 		// Use either userId or _id from the request user object for backward compatibility
@@ -96,7 +40,8 @@ const getCustomerDashboard = async (req, res) => {
 		const user = await User.findById(userId)
 			.populate({
 				path: "services.serviceId",
-				select: "name description requiredDocuments dueDate price salePrice gstRate", // Added price, salePrice, gstRate
+				select:
+					"name description requiredDocuments dueDate price salePrice gstRate", // Added price, salePrice, gstRate
 			})
 			.populate({
 				path: "services.employeeId",
@@ -113,7 +58,11 @@ const getCustomerDashboard = async (req, res) => {
 		// Format services with explicit handling of all fields
 		const formattedServices = user.services.map((service) => {
 			// Get the price first - this ensures we have a valid base for calculations
-			const price = service.price || service.serviceId?.salePrice || service.serviceId?.price || 0;
+			const price =
+				service.price ||
+				service.serviceId?.salePrice ||
+				service.serviceId?.price ||
+				0;
 			
 			// Check if tax values already exist in the service
 			let igst = service.igst || 0;
@@ -121,7 +70,7 @@ const getCustomerDashboard = async (req, res) => {
 			let sgst = service.sgst || 0;
 			
 			// If total GST is zero and we have a gstRate, calculate it
-			if ((igst + cgst + sgst === 0) && service.serviceId?.gstRate) {
+			if (igst + cgst + sgst === 0 && service.serviceId?.gstRate) {
 				const gstRate = service.serviceId.gstRate || 18; // Default 18% if not specified
 				const totalGstAmount = (price * gstRate) / 100;
 				
@@ -130,14 +79,14 @@ const getCustomerDashboard = async (req, res) => {
 				// or if isInterstate flag is explicitly set
 				const companyState = "Delhi"; // This should come from your config
 				const userState = user.state || "Unknown";
-				const isInterstate = service.isInterstate || (userState !== companyState);
+				const isInterstate = service.isInterstate || userState !== companyState;
 				
 				console.log(`Tax calculation for service ${service._id}:`, { 
 					price, 
 					gstRate, 
 					isInterstate,
 					userState, 
-					companyState 
+					companyState,
 				});
 				
 				if (isInterstate) {
@@ -155,7 +104,9 @@ const getCustomerDashboard = async (req, res) => {
 			
 			// Extract employee information
 			const employeeName = service.employeeId ? service.employeeId.name : null;
-			const employeeEmail = service.employeeId ? service.employeeId.email : null;
+			const employeeEmail = service.employeeId
+				? service.employeeId.email
+				: null;
 			
 			console.log("Processing service:", {
 				id: service._id,
@@ -166,7 +117,7 @@ const getCustomerDashboard = async (req, res) => {
 				igst: igst,
 				cgst: cgst,
 				sgst: sgst,
-				total: price + igst + cgst + sgst
+				total: price + igst + cgst + sgst,
 			});
 			
 			return {
@@ -184,7 +135,7 @@ const getCustomerDashboard = async (req, res) => {
 				employeeName: employeeName,
 				employeeEmail: employeeEmail,
 				managedBy: employeeName 
-					? `${employeeName}${employeeEmail ? ` (${employeeEmail})` : ''}`
+					? `${employeeName}${employeeEmail ? ` (${employeeEmail})` : ""}`
 					: "Unassigned",
 				
 				// Document information
@@ -208,7 +159,7 @@ const getCustomerDashboard = async (req, res) => {
 				completionDate: service.completionDate || null,
 				
 				// Feedback information
-				feedback: service.feedback || []
+				feedback: service.feedback || [],
 			};
 		});
 		
@@ -459,9 +410,9 @@ const updateCustomerProfile = async (req, res) => {
 		}
 
 		// Update only the provided fields
-		Object.keys(updateData).forEach(key => {
+		Object.keys(updateData).forEach((key) => {
 			// Skip sensitive fields that should not be updated through this endpoint
-			if (!['passwordHash', 'salt', 'role', '_id'].includes(key)) {
+			if (!["passwordHash", "salt", "role", "_id"].includes(key)) {
 				user[key] = updateData[key];
 			}
 		});
@@ -478,11 +429,13 @@ const updateCustomerProfile = async (req, res) => {
 		
 		res.status(200).json({
 			message: "Profile updated successfully",
-			user: userWithoutSensitiveInfo
+			user: userWithoutSensitiveInfo,
 		});
 	} catch (err) {
 		console.error("Error updating profile:", err);
-		res.status(500).json({ message: "Error updating profile", error: err.message });
+		res
+			.status(500)
+			.json({ message: "Error updating profile", error: err.message });
 	}
 };
 
@@ -499,7 +452,14 @@ const generateOrderId = (userId) => {
 
 const handlePaymentSuccess = async (req, res) => {
 	try {
-		const { razorpay_payment_id, amount, userId, serviceId, packageId, order_id } = req.body;
+		const {
+			razorpay_payment_id,
+			amount,
+			userId,
+			serviceId,
+			packageId,
+			order_id,
+		} = req.body;
 
 		// Initialize Razorpay instance
 		const razorpayInstance = new Razorpay({
@@ -541,9 +501,9 @@ const handlePaymentSuccess = async (req, res) => {
 
 		// Calculate base price based on package or service
 		const basePrice = selectedPackage 
-			? (selectedPackage.salePrice || selectedPackage.actualPrice)
-			: (service.packages && service.packages.length > 0)
-				? (service.packages[0].salePrice || service.packages[0].actualPrice)
+			? selectedPackage.salePrice || selectedPackage.actualPrice
+			: service.packages && service.packages.length > 0
+			? service.packages[0].salePrice || service.packages[0].actualPrice
 				: service.salePrice || service.actualPrice;
 
 		// Get GST rate from service (default to 18% if not specified)
@@ -557,7 +517,9 @@ const handlePaymentSuccess = async (req, res) => {
 		const paymentIncludesGST = true;
 		
 		// Calculate GST amounts
-		let igst = 0, cgst = 0, sgst = 0;
+		let igst = 0,
+			cgst = 0,
+			sgst = 0;
 		let taxableAmount = basePrice;
 		
 		// Determine if this is an inter-state transaction
@@ -568,7 +530,7 @@ const handlePaymentSuccess = async (req, res) => {
 		
 		if (paymentIncludesGST) {
 			// If the payment amount includes GST, back-calculate the base amount
-			const gstFactor = 1 + (gstRate / 100);
+			const gstFactor = 1 + gstRate / 100;
 			taxableAmount = basePrice / gstFactor;
 			const totalGST = basePrice - taxableAmount;
 			
@@ -606,13 +568,13 @@ const handlePaymentSuccess = async (req, res) => {
 			igst,
 			cgst,
 			sgst,
-			totalWithTax: taxableAmount + igst + cgst + sgst
+			totalWithTax: taxableAmount + igst + cgst + sgst,
 		});
 
 		// Use processing days from the selected package or default to service's first package
 		const processingDays = selectedPackage 
 			? selectedPackage.processingDays 
-			: (service.packages && service.packages.length > 0) 
+			: service.packages && service.packages.length > 0
 				? service.packages[0].processingDays 
 				: 7; // Default to 7 days if no package specified
 
@@ -637,10 +599,14 @@ const handlePaymentSuccess = async (req, res) => {
 		user.services.push({
 			serviceId,
 			orderId: orderId,
-			packageId: packageId || (service.packages && service.packages.length > 0 ? service.packages[0]._id : null),
+			packageId:
+				packageId ||
+				(service.packages && service.packages.length > 0
+					? service.packages[0]._id
+					: null),
 			packageName: selectedPackage 
 				? selectedPackage.name 
-				: (service.packages && service.packages.length > 0) 
+				: service.packages && service.packages.length > 0
 					? service.packages[0].name 
 					: null,
 			price: taxableAmount, // Store the price excluding GST
@@ -680,10 +646,12 @@ const handlePaymentSuccess = async (req, res) => {
 		// Add tax details to email
 		const taxDetails = `
 Base amount: ₹${taxableAmount.toFixed(2)}
-${isInterstate 
+${
+	isInterstate
     ? `IGST (${gstRate}%): ₹${igst.toFixed(2)}` 
-    : `CGST (${gstRate/2}%): ₹${cgst.toFixed(2)}
-SGST (${gstRate/2}%): ₹${sgst.toFixed(2)}`}
+		: `CGST (${gstRate / 2}%): ₹${cgst.toFixed(2)}
+SGST (${gstRate / 2}%): ₹${sgst.toFixed(2)}`
+}
 Total amount: ₹${amountInRupees.toFixed(2)}`;
 		
 		if (!assignmentResult.success) {
@@ -711,7 +679,7 @@ ${taxDetails}`
 				? { 
 					id: selectedPackage._id,
 					name: selectedPackage.name,
-					processingDays: selectedPackage.processingDays
+						processingDays: selectedPackage.processingDays,
 				} 
 				: null,
 			taxDetails: {
@@ -719,8 +687,8 @@ ${taxDetails}`
 				igst,
 				cgst,
 				sgst,
-				total: amountInRupees
-			}
+				total: amountInRupees,
+			},
 		});
 	} catch (error) {
 		console.error("Error handling payment success:", error);
@@ -842,15 +810,17 @@ const loginUser = async (req, res) => {
 
 	try {
 		if (!email || !password) {
-			return res.status(400).json({ message: "Email and password are required" });
+			return res
+				.status(400)
+				.json({ message: "Email and password are required" });
 		}
 
 		// Find the user by email or username
 		const user = await User.findOne({ 
 			$or: [
 				{ email: email },
-				{ username: email } // Allow login with username in the email field
-			]
+				{ username: email }, // Allow login with username in the email field
+			],
 		});
 		
 		if (!user) {
@@ -883,8 +853,8 @@ const loginUser = async (req, res) => {
 				name: user.name,
 				email: user.email,
 				role: user.role,
-				isActive: user.isActive
-			}
+				isActive: user.isActive,
+			},
 		});
 	} catch (err) {
 		console.error("Error logging in user:", err);
@@ -919,13 +889,15 @@ const initiatePayment = async (req, res) => {
 			if (service) {
 				serviceDetails = {
 					name: service.name,
-					gstRate: service.gstRate || 18
+					gstRate: service.gstRate || 18,
 				};
 				
 				// Find package if packageId is provided
 				let selectedPackage = null;
 				if (packageId && service.packages && service.packages.length > 0) {
-					selectedPackage = service.packages.find(pkg => pkg._id.toString() === packageId);
+					selectedPackage = service.packages.find(
+						(pkg) => pkg._id.toString() === packageId
+					);
 					if (selectedPackage) {
 						serviceDetails.packageName = selectedPackage.name;
 					}
@@ -940,7 +912,7 @@ const initiatePayment = async (req, res) => {
 					baseAmount,
 					gstRate: serviceDetails.gstRate,
 					gstAmount,
-					totalAmount
+					totalAmount,
 				};
 				
 				console.log("Payment calculation:", gstInfo);
@@ -957,23 +929,25 @@ const initiatePayment = async (req, res) => {
 			payment_capture: 1,
 			notes: {
 				...notes,
-				serviceId: serviceId || '',
-				packageId: packageId || '',
+				serviceId: serviceId || "",
+				packageId: packageId || "",
 				baseAmount: gstInfo.baseAmount || amount,
 				gstRate: gstInfo.gstRate || 18,
-				gstAmount: gstInfo.gstAmount || 0
-			}
+				gstAmount: gstInfo.gstAmount || 0,
+			},
 		});
 		
 		// Return order with tax details
 		res.json({ 
 			order,
 			serviceDetails,
-			gstInfo
+			gstInfo,
 		});
 	} catch (error) {
 		console.error("Error initiating payment:", error);
-		res.status(500).json({ message: "Error initiating payment", error: error.message });
+		res
+			.status(500)
+			.json({ message: "Error initiating payment", error: error.message });
 	}
 };
 
@@ -1250,7 +1224,9 @@ const googleRegister = async (req, res) => {
 
 		// Validate required fields
 		if (!name || !email || !googleId) {
-			return res.status(400).json({ message: "Name, email, and Google ID are required" });
+			return res
+				.status(400)
+				.json({ message: "Name, email, and Google ID are required" });
 		}
 
 		// Check if user already exists with this Google ID
@@ -1297,7 +1273,7 @@ const googleRegister = async (req, res) => {
 		
 		// Create new customer
 		const newUser = new User({
-			_id: customId,  // Set the custom ID explicitly
+			_id: customId, // Set the custom ID explicitly
 			name,
 			email,
 			passwordHash,
@@ -1342,7 +1318,240 @@ const googleRegister = async (req, res) => {
 		console.error("Google registration error:", error);
 		return res.status(500).json({ 
 			message: "Server error during Google registration",
-			error: error.message
+			error: error.message,
+		});
+	}
+};
+
+// Password Reset Controller Functions
+
+/**
+ * Generate a password reset token and send it to the user's email
+ */
+const forgotPassword = async (req, res) => {
+	try {
+		const { email } = req.body;
+
+		if (!email) {
+			return res.status(400).json({
+				success: false,
+				message: "Email is required",
+			});
+		}
+
+		// Find the user by email
+		const user = await User.findOne({ email: email });
+		if (!user) {
+			return res.status(404).json({
+				success: false,
+				message: "User with this email does not exist",
+			});
+		}
+
+		// Generate a random reset token
+		const resetToken = crypto.randomBytes(32).toString("hex");
+
+		// Set token expiration (1 hour from now)
+		const resetTokenExpiry = Date.now() + 3600000; // 1 hour in milliseconds
+
+		// Update user with reset token and expiry
+		user.resetPasswordToken = resetToken;
+		user.resetPasswordExpires = resetTokenExpiry;
+		await user.save();
+
+		// Create reset URL (hardcoded frontend URL)
+		const resetUrl = `https://thefinshelter.com/reset-password/${resetToken}`;
+
+		// Email content
+		const subject = "Password Reset Request";
+		const text = `You are receiving this email because you (or someone else) requested a password reset for your account.\n\n
+            Please click the link below to reset your password:\n\n
+            ${resetUrl}\n\n
+            This link is valid for 1 hour only.\n\n
+            If you did not request this, please ignore this email and your password will remain unchanged.`;
+
+		// HTML Email template
+		const htmlContent = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Password Reset Request</title>
+            <style>
+                body {
+                    font-family: 'Poppins', Arial, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 600px;
+                    margin: 0 auto;
+                }
+                .container {
+                    background-color: #f7f7f7;
+                    padding: 20px;
+                    border-radius: 5px;
+                }
+                .header {
+                    background-color: #1b321d;
+                    color: white;
+                    padding: 15px;
+                    text-align: center;
+                    border-radius: 5px 5px 0 0;
+                }
+                .content {
+                    background-color: white;
+                    padding: 20px;
+                    border-radius: 0 0 5px 5px;
+                }
+                .button {
+                    display: inline-block;
+                    background-color: #1b321d;
+                    color: white;
+                    text-decoration: none;
+                    padding: 10px 20px;
+                    margin: 20px 0;
+                    border-radius: 5px;
+                    font-weight: bold;
+                }
+                .footer {
+                    text-align: center;
+                    font-size: 0.8em;
+                    margin-top: 20px;
+                    color: #666;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>Password Reset Request</h1>
+                </div>
+                <div class="content">
+                    <p>Hello ${user.name},</p>
+                    <p>You are receiving this email because you (or someone else) requested a password reset for your account.</p>
+                    <p>Please click the button below to reset your password:</p>
+                    <a href="${resetUrl}" class="button">Reset Password</a>
+                    <p>This link is valid for 1 hour only.</p>
+                    <p>If you did not request this, please ignore this email and your password will remain unchanged.</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; ${new Date().getFullYear()} TaxHarbor. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+
+		// Send password reset email
+		await sendEmail(user.email, subject, text, htmlContent);
+
+		res.status(200).json({
+			success: true,
+			message: "Password reset link sent to your email",
+		});
+	} catch (error) {
+		console.error("Error in forgot password:", error);
+		res.status(500).json({
+			success: false,
+			message: "An error occurred while processing your request",
+			error: error.message,
+		});
+	}
+};
+
+/**
+ * Verify if a reset token is valid and not expired
+ */
+const verifyResetToken = async (req, res) => {
+	try {
+		const { token } = req.params;
+
+		// Find user with this token and check if it's expired
+		const user = await User.findOne({
+			resetPasswordToken: token,
+			resetPasswordExpires: { $gt: Date.now() },
+		});
+
+		if (!user) {
+			return res.status(400).json({
+				success: false,
+				message: "Password reset token is invalid or has expired",
+			});
+		}
+
+		// Token is valid
+		res.status(200).json({
+			success: true,
+			message: "Token is valid",
+			userId: user._id,
+		});
+	} catch (error) {
+		console.error("Error verifying reset token:", error);
+		res.status(500).json({
+			success: false,
+			message: "An error occurred while verifying the token",
+			error: error.message,
+		});
+	}
+};
+
+/**
+ * Reset user's password using the token
+ */
+const resetPassword = async (req, res) => {
+	try {
+		const { token, password } = req.body;
+
+		if (!token || !password) {
+			return res.status(400).json({
+				success: false,
+				message: "Token and password are required",
+			});
+		}
+
+		// Find user with this token and check if it's expired
+		const user = await User.findOne({
+			resetPasswordToken: token,
+			resetPasswordExpires: { $gt: Date.now() },
+		});
+
+		if (!user) {
+			return res.status(400).json({
+				success: false,
+				message: "Password reset token is invalid or has expired",
+			});
+		}
+
+		// Generate new salt and hash the new password
+		const salt = crypto.randomBytes(16).toString("hex");
+		const hash = hashPassword(password, salt);
+
+		// Update user's password
+		user.passwordHash = hash;
+		user.salt = salt;
+
+		// Clear reset token fields
+		user.resetPasswordToken = undefined;
+		user.resetPasswordExpires = undefined;
+
+		await user.save();
+
+		// Send confirmation email
+		const subject = "Your Password Has Been Changed";
+		const text = `Hello ${user.name},\n\nThis is a confirmation that the password for your account with email ${user.email} has just been changed.\n\nIf you did not make this change, please contact our support team immediately.`;
+
+		await sendEmail(user.email, subject, text);
+
+		res.status(200).json({
+			success: true,
+			message: "Password has been reset successfully",
+		});
+	} catch (error) {
+		console.error("Error resetting password:", error);
+		res.status(500).json({
+			success: false,
+			message: "An error occurred while resetting your password",
+			error: error.message,
 		});
 	}
 };
@@ -1360,7 +1569,7 @@ module.exports = {
 	uploadDocuments,
 	sendQuery,
 
-	registerFlexiCustomer,
+	registerFlexiCustomer, 
 	processFlexiFunnelRedirect,
 
 	getCustomerQueriesWithReplies,
@@ -1368,4 +1577,8 @@ module.exports = {
 	updateBankDetails,
 
 	googleRegister,
+	// Export the password reset functions
+	forgotPassword,
+	resetPassword,
+	verifyResetToken,
 };

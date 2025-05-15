@@ -259,6 +259,9 @@ const userSchema = new mongoose.Schema(
 		salt: { type: String, required: function() {
 			return !this.googleId; // Only required if no googleId is provided
 		}},
+		// Password reset fields
+		resetPasswordToken: { type: String },
+		resetPasswordExpires: { type: Date },
 		// Google authentication fields
 		googleId: { type: String, unique: true, sparse: true },
 		avatarUrl: { type: String },

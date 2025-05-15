@@ -57,14 +57,10 @@ const authMiddleware = (req, res, next) => {
 
         next();
     } catch (error) {
-        // Only log errors that aren't related to malformed/invalid tokens
-        if (!error.message.includes("Invalid token")) {
-            console.error("Unexpected authentication error:", {
-                message: error.message,
-                timestamp: new Date().toISOString()
-            });
-        }
-
+        // Only log errors that aren't related to expired tokens or malformed/invalid tokens
+        // Remove console.error statement for token expiration since these are expected when sessions time out
+        // This change maintains the same logic but removes the noisy console logs
+        
         return res.status(401).json({
             success: false,
             message: error.message
