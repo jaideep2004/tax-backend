@@ -175,30 +175,48 @@ const getMessages = async (req, res) => {
 	}
 };
 const markMessageAsRead = async (req, res) => {
-	const { messageId } = req.params;
+	const { orderId, serviceId, userId } = req.body;
 
 	try {
-		const message = await Message.findById(messageId);
-		if (!message) {
-			return res.status(404).json({ message: "Message not found" });
+		let query = {};
+		if (orderId) {
+			query.orderId = orderId;
+		}
+		if (serviceId) {
+			query.service = serviceId;
+		}
+		
+		// Find all messages for this order/service
+		const messages = await Message.find(query);
+		
+		// Mark messages as read
+		for (let message of messages) {
+			// If admin is viewing customer messages
+			if (message.sender !== userId) {
+				message.isRead = true;
+			}
+			
+			// If customer is viewing admin replies
+			if (message.replyContent && message.replyContent.length > 0) {
+				message.replyContent = message.replyContent.map(reply => ({
+					...reply,
+					isRead: true
+				}));
+			}
+			
+			await message.save();
 		}
 
-		if (message.isRead) {
-			return res.status(200).json({
-				message: "Message is already marked as read",
-				updatedMessage: message,
-			});
-		}
-
-		message.isRead = true;
-		await message.save();
-
-		res.json({ message: "Message marked as read", updatedMessage: message });
+		res.json({ 
+			message: "Messages marked as read",
+			updatedMessages: messages 
+		});
 	} catch (err) {
-		console.error("Error marking message as read:", err);
-		res
-			.status(500)
-			.json({ message: "Error marking message as read", error: err.message });
+		console.error("Error marking messages as read:", err);
+		res.status(500).json({ 
+			message: "Error marking messages as read", 
+			error: err.message 
+		});
 	}
 };
 

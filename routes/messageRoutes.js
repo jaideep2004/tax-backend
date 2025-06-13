@@ -16,8 +16,8 @@ router.post("/send", authMiddleware, uploadMiddleware, sendMessage);
 // Get all messages 
 router.get("/", authMiddleware, getMessages);
 
-// Mark a message as read
-router.patch("/:messageId/read", authMiddleware, markMessageAsRead);
+// Mark messages as read
+router.post("/mark-as-read", authMiddleware, markMessageAsRead);
 
 // Reply to a message
 router.patch(

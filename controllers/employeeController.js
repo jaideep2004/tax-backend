@@ -211,7 +211,7 @@ const updateServiceStatus = async (req, res) => {
 
 	try {
 		// Validate the status input
-		if (!["completed", "in-process", "rejected"].includes(status)) {
+		if (!["completed", "in-process", "rejected", "pending-l1-review"].includes(status)) {
 			return res.status(400).json({ message: "Invalid status" });
 		}
 
@@ -355,24 +355,19 @@ const getAssignedCustomers = async (req, res) => {
 							status: service.status,
 							dueDate: service.dueDate,
 							completionDate: service.completionDate || null,
-							// Include payment and price information
 							price: service.price || 0,
 							paymentAmount: service.paymentAmount || 0,
 							paymentMethod: service.paymentMethod || "N/A",
 							paymentReference: service.paymentReference || null,
-							// Include tax information
 							igst: service.igst || 0,
 							cgst: service.cgst || 0,
 							sgst: service.sgst || 0,
 							discount: service.discount || 0,
-							// Include feedback
 							feedback: service.feedback || [],
-							// Include other relevant fields
-							documents: service.documents?.length || 0,
+							documents: service.documents || [],
 							hasDocuments: service.documents?.length > 0,
 							queries: service.queries?.length || 0,
 							hasQueries: service.queries?.length > 0,
-							// Additional fields for delay tracking
 							delayReason: service.delayReason || "",
 						})),
 					};
