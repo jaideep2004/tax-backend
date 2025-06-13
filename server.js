@@ -28,7 +28,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const PORT = process.env.PORT || 8000;
 
 app.get("/", (req, res) => {
-	res.send("FINSHELTER backend 16 MAY!!");
+	res.send("FINSHELTER backend 13 JUN!!");
 });
 
 // app.listen(PORT, () => {
