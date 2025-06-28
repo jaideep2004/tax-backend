@@ -20,7 +20,7 @@ router.get("/", authMiddleware, getMessages);
 router.post("/mark-as-read", authMiddleware, markMessageAsRead);
 
 // Reply to a message
-router.patch(
+router.patch( 
 	"/:messageId/reply",
 	authMiddleware,
 	uploadMiddleware,

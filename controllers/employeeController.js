@@ -204,88 +204,62 @@ const getEmployeeDash = async (req, res) => {
 	}
 };
 
+// Update service status
 const updateServiceStatus = async (req, res) => {
-	const { serviceId } = req.params;
-	const { status, customerId } = req.body;
-	const employeeId = req.user._id;
-
 	try {
-		// Validate the status input
-		if (!["completed", "in-process", "rejected", "pending-l1-review"].includes(status)) {
-			return res.status(400).json({ message: "Invalid status" });
-		}
+		const { customerId, serviceId, status } = req.body;
+		const employeeId = req.user._id;
 
-		// Start a MongoDB session for transaction
-		const session = await User.startSession();
-		session.startTransaction();
-
-		try {
-			// Update customer's service
-			const customerUpdate = await User.findOneAndUpdate(
-				{
-					_id: customerId,
-					"services.serviceId": serviceId,
-					"services.employeeId": employeeId,
-				},
-				{
-					$set: { "services.$.status": status },
-				},
-				{ new: true }
-			);
-
-			if (!customerUpdate) {
-				throw new Error("Customer or service not found");
-			}
-
-			// Update employee's service (if it exists in their services array)
-			const employeeUpdate = await User.findOneAndUpdate(
-				{
-					_id: employeeId,
-					"services.serviceId": serviceId,
-				},
-				{
-					$set: { "services.$.status": status },
-				},
-				{ new: true }
-			);
-
-			// If service doesn't exist in employee's services array, add it
-			if (!employeeUpdate) {
-				await User.findByIdAndUpdate(employeeId, {
-					$push: {
-						services: {
-							serviceId,
-							status,
-							customerId,
-							employeeId,
-						},
-					},
-				});
-			}
-
-			// Commit the transaction
-			await session.commitTransaction();
-
-			// Get the updated service from customer
-			const updatedService = customerUpdate.services.find(
-				(service) => service.serviceId.toString() === serviceId.toString()
-			);
-
-			res.json({
-				message: `Service status updated to ${status}`,
-				service: updatedService,
+		// Validate inputs
+		if (!customerId || !serviceId || !status) {
+			return res.status(400).json({
+				success: false,
+				message: "Customer ID, Service ID, and status are required",
 			});
-		} catch (error) {
-			await session.abortTransaction();
-			throw error;
-		} finally {
-			session.endSession();
 		}
-	} catch (err) {
-		console.error("Error updating service status:", err);
-		res.status(500).json({
+
+		// Find the customer
+		const customer = await User.findById(customerId);
+		if (!customer) {
+			return res.status(404).json({
+				success: false,
+				message: "Customer not found",
+			});
+		}
+
+		// Find the service
+		const serviceIndex = customer.services.findIndex(
+			(service) => service._id.toString() === serviceId.toString()
+		);
+
+		if (serviceIndex === -1) {
+			return res.status(404).json({
+				success: false,
+				message: "Service not found",
+			});
+		}
+
+		// Update the service status
+		customer.services[serviceIndex].status = status;
+
+		// Add additional data based on status
+		if (status === "completed") {
+			customer.services[serviceIndex].completedAt = new Date();
+		}
+
+		await customer.save();
+
+		return res.status(200).json({
+			success: true,
+			message: "Service status updated successfully",
+			status: status,
+		});
+	} catch (error) {
+		console.error("Error updating service status:", error);
+		return res.status(500).json({
+			success: false,
 			message: "Error updating service status",
-			error: err.message,
+			error: error.message,
 		});
 	}
 };
@@ -295,12 +269,12 @@ const getAssignedCustomers = async (req, res) => {
 
 	try {
 		// Find the employee's assigned customers and get their manager
-		const employee = await User.findById(employeeId).select(
-			"assignedCustomers L1EmpCode"
-		).populate({
-			path: "L1EmpCode",
-			select: "name"
-		});
+		const employee = await User.findById(employeeId)
+			.select("assignedCustomers L1EmpCode")
+			.populate({
+				path: "L1EmpCode",
+				select: "name",
+			});
 
 		if (!employee) {
 			return res.status(404).json({ message: "Employee not found" });
@@ -311,7 +285,11 @@ const getAssignedCustomers = async (req, res) => {
 		if (!assignedCustomerIds || assignedCustomerIds.length === 0) {
 			return res
 				.status(200)
-				.json({ message: "No customers assigned to this employee", success: true, customers: [] });
+				.json({
+					message: "No customers assigned to this employee",
+					success: true,
+					customers: [],
+				});
 		}
 
 		// Get manager name
@@ -321,11 +299,12 @@ const getAssignedCustomers = async (req, res) => {
 		const customers = await User.find({
 			_id: { $in: assignedCustomerIds },
 			role: "customer",
-		}).select("name email _id state services")
-		.populate({
-			path: "services.serviceId",
-			select: "name description category",
-		});
+		})
+			.select("name email _id state services")
+			.populate({
+				path: "services.serviceId",
+				select: "name description category",
+			});
 
 		// Filter services for the current employee and include all required fields
 		const filteredCustomers = customers
@@ -697,8 +676,8 @@ const getAssignedLeads = async (req, res) => {
 		// Find all leads assigned to this employee
 		const leads = await Lead.find({ assignedToEmployee: employeeId })
 			.populate({
-				path: 'serviceId',
-				select: 'name description category packages',
+				path: "serviceId",
+				select: "name description category packages",
 			})
 			.sort({ createdAt: -1 });
 
@@ -707,10 +686,10 @@ const getAssignedLeads = async (req, res) => {
 			leads,
 		});
 	} catch (error) {
-		console.error('Error fetching assigned leads:', error);
+		console.error("Error fetching assigned leads:", error);
 		res.status(500).json({
 			success: false,
-			message: 'Error fetching assigned leads',
+			message: "Error fetching assigned leads",
 			error: error.message,
 		});
 	}
@@ -731,12 +710,12 @@ const approveLead = async (req, res) => {
 		if (!lead) {
 			return res.status(404).json({
 				success: false,
-				message: 'Lead not found or not assigned to you',
+				message: "Lead not found or not assigned to you",
 			});
 		}
 
 		// Verify lead status is 'assigned'
-		if (lead.status !== 'assigned') {
+		if (lead.status !== "assigned") {
 			return res.status(400).json({
 				success: false,
 				message: `Cannot approve lead with status '${lead.status}'. Lead must be in 'assigned' status.`,
@@ -744,20 +723,20 @@ const approveLead = async (req, res) => {
 		}
 
 		// Update lead status to 'accepted' and set acceptedAt timestamp
-		lead.status = 'accepted';
+		lead.status = "accepted";
 		lead.acceptedAt = new Date();
 		await lead.save();
 
 		res.status(200).json({
 			success: true,
-			message: 'Lead approved successfully',
+			message: "Lead approved successfully",
 			lead,
 		});
 	} catch (error) {
-		console.error('Error approving lead:', error);
+		console.error("Error approving lead:", error);
 		res.status(500).json({
 			success: false,
-			message: 'Error approving lead',
+			message: "Error approving lead",
 			error: error.message,
 		});
 	}
@@ -774,7 +753,7 @@ const rejectLead = async (req, res) => {
 		if (!reason) {
 			return res.status(400).json({
 				success: false,
-				message: 'Please provide a reason for rejecting the lead',
+				message: "Please provide a reason for rejecting the lead",
 			});
 		}
 
@@ -787,12 +766,12 @@ const rejectLead = async (req, res) => {
 		if (!lead) {
 			return res.status(404).json({
 				success: false,
-				message: 'Lead not found or not assigned to you',
+				message: "Lead not found or not assigned to you",
 			});
 		}
 
 		// Verify lead status is 'assigned'
-		if (lead.status !== 'assigned') {
+		if (lead.status !== "assigned") {
 			return res.status(400).json({
 				success: false,
 				message: `Cannot reject lead with status '${lead.status}'. Lead must be in 'assigned' status.`,
@@ -800,24 +779,30 @@ const rejectLead = async (req, res) => {
 		}
 
 		// Update lead status to 'rejected' and set rejectedAt timestamp
-		lead.status = 'rejected';
+		lead.status = "rejected";
 		lead.rejectedAt = new Date();
 		lead.rejectReason = reason;
 		await lead.save();
 
 		// Notify admin about rejection
-		const admin = await User.findOne({ role: 'admin' });
+		const admin = await User.findOne({ role: "admin" });
 		if (admin && admin.email) {
 			await sendEmail(
 				admin.email,
-				'Lead Rejected',
+				"Lead Rejected",
 				`A lead has been rejected by an employee:
 
 Lead Details:
 - ID: ${lead._id}
 - Name: ${lead.name}
 - Email: ${lead.email}
-- Service: ${lead.serviceId ? (typeof lead.serviceId === 'object' ? lead.serviceId.name : lead.serviceId) : 'N/A'}
+- Service: ${
+					lead.serviceId
+						? typeof lead.serviceId === "object"
+							? lead.serviceId.name
+							: lead.serviceId
+						: "N/A"
+				}
 
 Reason for rejection: ${reason}
 
@@ -827,14 +812,14 @@ Please review this in the admin dashboard.`
 
 		res.status(200).json({
 			success: true,
-			message: 'Lead rejected successfully',
+			message: "Lead rejected successfully",
 			lead,
 		});
 	} catch (error) {
-		console.error('Error rejecting lead:', error);
+		console.error("Error rejecting lead:", error);
 		res.status(500).json({
 			success: false,
-			message: 'Error rejecting lead',
+			message: "Error rejecting lead",
 			error: error.message,
 		});
 	}
@@ -856,12 +841,12 @@ const uploadLeadDocuments = async (req, res) => {
 		if (!lead) {
 			return res.status(404).json({
 				success: false,
-				message: 'Lead not found or not assigned to you',
+				message: "Lead not found or not assigned to you",
 			});
 		}
 
 		// Verify lead status is 'accepted' (as documents are usually uploaded after accepting)
-		if (lead.status !== 'accepted') {
+		if (lead.status !== "accepted") {
 			return res.status(400).json({
 				success: false,
 				message: `Documents can only be uploaded for accepted leads (current status: ${lead.status})`,
@@ -872,12 +857,12 @@ const uploadLeadDocuments = async (req, res) => {
 		if (!req.files || req.files.length === 0) {
 			return res.status(400).json({
 				success: false,
-				message: 'No files uploaded',
+				message: "No files uploaded",
 			});
 		}
 
 		// Create upload directory if it doesn't exist
-		const uploadDir = path.join('uploads', 'leads', leadId);
+		const uploadDir = path.join("uploads", "leads", leadId);
 		if (!fs.existsSync(uploadDir)) {
 			fs.mkdirSync(uploadDir, { recursive: true });
 		}
@@ -894,7 +879,7 @@ const uploadLeadDocuments = async (req, res) => {
 					mimetype: file.mimetype,
 					size: file.size,
 					uploadedAt: new Date(),
-					description: 'Payment evidence',
+					description: "Payment evidence",
 				};
 			})
 		);
@@ -925,40 +910,48 @@ const uploadLeadDocuments = async (req, res) => {
 		await lead.save();
 
 		// Notify admin about document upload
-		const admin = await User.findOne({ role: 'admin' });
+		const admin = await User.findOne({ role: "admin" });
 		if (admin && admin.email) {
 			await sendEmail(
 				admin.email,
-				'Lead Documents Uploaded',
+				"Lead Documents Uploaded",
 				`Documents have been uploaded for a lead:
 
 Lead Details:
 - ID: ${lead._id}
 - Name: ${lead.name}
 - Email: ${lead.email}
-- Service: ${lead.serviceId ? (typeof lead.serviceId === 'object' ? lead.serviceId.name : lead.serviceId) : 'N/A'}
+- Service: ${
+					lead.serviceId
+						? typeof lead.serviceId === "object"
+							? lead.serviceId.name
+							: lead.serviceId
+						: "N/A"
+				}
 
-${note ? `Employee Note: ${note}` : ''}
+${note ? `Employee Note: ${note}` : ""}
 
 Payment Details:
-${paymentAmount ? `- Amount: ₹${paymentAmount}` : ''}
-${paymentMethod ? `- Method: ${paymentMethod}` : ''}
-${paymentReference ? `- Reference: ${paymentReference}` : ''}
+${paymentAmount ? `- Amount: ₹${paymentAmount}` : ""}
+${paymentMethod ? `- Method: ${paymentMethod}` : ""}
+${paymentReference ? `- Reference: ${paymentReference}` : ""}
 
-${documentRecords.length} document(s) uploaded. Please review this in the admin dashboard.`
+${
+	documentRecords.length
+} document(s) uploaded. Please review this in the admin dashboard.`
 			);
 		}
 
 		res.status(200).json({
 			success: true,
-			message: 'Documents uploaded successfully',
+			message: "Documents uploaded successfully",
 			lead,
 		});
 	} catch (error) {
-		console.error('Error uploading lead documents:', error);
+		console.error("Error uploading lead documents:", error);
 		res.status(500).json({
 			success: false,
-			message: 'Error uploading documents',
+			message: "Error uploading documents",
 			error: error.message,
 		});
 	}
@@ -972,7 +965,9 @@ const updateServiceDelayReason = async (req, res) => {
 
 		// Input validation
 		if (!serviceId || !customerId) {
-			return res.status(400).json({ message: "Service ID and Customer ID are required" });
+			return res
+				.status(400)
+				.json({ message: "Service ID and Customer ID are required" });
 		}
 
 		// Find the customer
@@ -992,24 +987,110 @@ const updateServiceDelayReason = async (req, res) => {
 
 		// Check if the service is assigned to this employee
 		if (customer.services[serviceIndex].employeeId.toString() !== employeeId) {
-			return res.status(403).json({ message: "Not authorized to update this service" });
+			return res
+				.status(403)
+				.json({ message: "Not authorized to update this service" });
 		}
 
 		// Update the delay reason
 		customer.services[serviceIndex].delayReason = delayReason;
-		
+
 		// Save the updated customer
 		await customer.save();
 
-		return res.status(200).json({ 
+		return res.status(200).json({
 			message: "Service delay reason updated successfully",
-			delayReason: delayReason
+			delayReason: delayReason,
 		});
 	} catch (error) {
 		console.error("Error updating service delay reason:", error);
-		return res.status(500).json({ 
+		return res.status(500).json({
 			message: "Error updating service delay reason",
-			error: error.message
+			error: error.message,
+		});
+	}
+};
+
+const sendOrderForL1Review = async (req, res) => {
+	try {
+		const { orderId } = req.body;
+		const employeeId = req.user._id; // Get the employee ID from the authenticated user
+
+		// Find the customer with the given order ID
+		const customer = await User.findOne({
+			"services.orderId": orderId,
+			role: "customer",
+		});
+
+		if (!customer) {
+			return res.status(404).json({
+				success: false,
+				message: "Order not found",
+			});
+		}
+
+		// Find the service index
+		const serviceIndex = customer.services.findIndex(
+			(service) => service.orderId === orderId
+		);
+
+		if (serviceIndex === -1) {
+			return res.status(404).json({
+				success: false,
+				message: "Service not found",
+			});
+		}
+
+		// Find the employee who is sending for review
+		const employee = await User.findById(employeeId);
+		if (!employee) {
+			return res.status(400).json({
+				success: false,
+				message: "Employee not found",
+			});
+		}
+
+		// Check for L1 employee assignment
+		if (!employee.L1EmpCode) {
+			return res.status(400).json({
+				success: false,
+				message:
+					"No L1 employee assigned to you. Please contact your administrator.",
+			});
+		}
+
+		// Update the service status to pending-l1-review
+		customer.services[serviceIndex].status = "pending-l1-review";
+		customer.services[serviceIndex].sentForReviewAt = new Date();
+		customer.services[serviceIndex].employeeId = employeeId; // Store the employee who sent for review
+
+		await customer.save();
+
+		// Send email notification to L1 employee if possible
+		try {
+			const l1Employee = await User.findOne({ _id: employee.L1EmpCode });
+			if (l1Employee && l1Employee.email) {
+				await sendEmail(
+					l1Employee.email,
+					"New Order Review Request",
+					`Hello ${l1Employee.name},\n\nA new order #${orderId} requires your review. Please check your dashboard for details.`
+				);
+			}
+		} catch (emailError) {
+			console.error("Error sending email notification:", emailError);
+			// Continue execution even if email fails
+		}
+
+		res.status(200).json({
+			success: true,
+			message: "Order sent for L1 review successfully",
+		});
+	} catch (error) {
+		console.error("Error sending order for L1 review:", error);
+		res.status(500).json({
+			success: false,
+			message: "Error sending order for L1 review",
+			error: error.message,
 		});
 	}
 };
@@ -1027,4 +1108,5 @@ module.exports = {
 	rejectLead,
 	uploadLeadDocuments,
 	updateServiceDelayReason,
+	sendOrderForL1Review,
 };

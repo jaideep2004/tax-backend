@@ -1,14 +1,11 @@
-const nodemailer = require('nodemailer');
+const { SendMailClient } = require("zeptomail");
 require('dotenv').config();
 
-// Email transport configuration
-const transporter = nodemailer.createTransport({
-    service: 'gmail', // Use your email service provider
-    auth: {
-        user: process.env.EMAIL_USER, // Your email address
-        pass: process.env.EMAIL_PASS, // Your email app-specific password
-    },
-});
+// Initialize Zepto Mail client
+const url = "api.zeptomail.com/";
+const token = process.env.ZEPTO_MAIL_TOKEN; // You'll need to add this to your .env file
+
+const client = new SendMailClient({ url, token });
 
 // Function to send emails with HTML template
 const sendEmail = async (to, subject, text, htmlContent = null) => {
@@ -75,20 +72,35 @@ const sendEmail = async (to, subject, text, htmlContent = null) => {
         </html>
         `;
 
-        // Send email with either custom or default HTML template
-        await transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to,
-            subject,
-            text, // Plain text version
-            html: htmlContent || defaultHtmlContent, // Use custom HTML or default template
-        });
+        // Prepare the email data
+        const emailData = {
+            from: {
+                address: process.env.EMAIL_USER || "noreply@yourdomain.com",
+                name: "TaxHarbor"
+            },
+            to: [
+                {
+                    email_address: {
+                        address: to,
+                        name: to.split('@')[0] // Use part before @ as name
+                    }
+                }
+            ],
+            subject: subject,
+            textbody: text,
+            htmlbody: htmlContent || defaultHtmlContent,
+            track_opens: true,
+            track_clicks: true
+        };
+
+        // Send email using Zepto Mail
+        const response = await client.sendMail(emailData);
         console.log(`Email sent to ${to}`);
         return true;
     } catch (error) {
         console.error(`Failed to send email to ${to}:`, error);
         return false;
     }
-}; 
- 
+};
+
 module.exports = { sendEmail }; 

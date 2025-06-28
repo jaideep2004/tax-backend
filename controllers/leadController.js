@@ -10,7 +10,7 @@ const createLead = async (req, res) => {
         // Validate required fields
         if (!name || !email || !mobile || !serviceId) {
             return res.status(400).json({ 
-                success: false, 
+                success: false,  
                 message: "Missing required fields" 
             });
         }
@@ -29,7 +29,7 @@ const createLead = async (req, res) => {
             name,
             email,
             mobile,
-            serviceId,
+            serviceId, 
             message,
             source,
             status: "new"

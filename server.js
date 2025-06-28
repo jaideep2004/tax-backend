@@ -31,14 +31,17 @@ app.get("/", (req, res) => {
 	res.send("FINSHELTER backend 13 JUN!!");
 });
 
+
 // app.listen(PORT, () => {
 // 	console.log(`Server running on port ${PORT}`);
 // });
 
+
+
 const options = {
 	key: fs.readFileSync(path.join(__dirname, "certs/privkey.pem")),
 	cert: fs.readFileSync(path.join(__dirname, "certs/fullchain.pem")),
-};  
+};
 
 https.createServer(options, app).listen(PORT, () => {
 	console.log(`Server running on port ${PORT} (HTTPS)`);

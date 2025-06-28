@@ -40,8 +40,7 @@ const getCustomerDashboard = async (req, res) => {
 		const user = await User.findById(userId)
 			.populate({
 				path: "services.serviceId",
-				select:
-					"name description requiredDocuments dueDate price salePrice gstRate", // Added price, salePrice, gstRate
+				select: "name description packages dueDate price salePrice gstRate",
 			})
 			.populate({
 				path: "services.employeeId",
@@ -75,27 +74,15 @@ const getCustomerDashboard = async (req, res) => {
 				const totalGstAmount = (price * gstRate) / 100;
 				
 				// Determine if this is an inter-state transaction
-				// For demonstration, check if user's state is different from company state
-				// or if isInterstate flag is explicitly set
 				const companyState = "Delhi"; // This should come from your config
 				const userState = user.state || "Unknown";
 				const isInterstate = service.isInterstate || userState !== companyState;
 				
-				console.log(`Tax calculation for service ${service._id}:`, { 
-					price, 
-					gstRate, 
-					isInterstate,
-					userState, 
-					companyState,
-				});
-				
 				if (isInterstate) {
-					// Inter-state transaction: all tax as IGST
 					igst = totalGstAmount;
 					cgst = 0;
 					sgst = 0;
 				} else {
-					// Intra-state transaction: split between CGST and SGST
 					igst = 0;
 					cgst = totalGstAmount / 2;
 					sgst = totalGstAmount / 2;
@@ -108,17 +95,16 @@ const getCustomerDashboard = async (req, res) => {
 				? service.employeeId.email
 				: null;
 			
-			console.log("Processing service:", {
-				id: service._id,
-				name: service.serviceId?.name,
-				employeeId: service.employeeId?._id,
-				employeeName,
-				price: price,
-				igst: igst,
-				cgst: cgst,
-				sgst: sgst,
-				total: price + igst + cgst + sgst,
-			});
+			// Find requiredDocuments from the correct package
+			let requiredDocuments = [];
+			if (service.packageId && service.serviceId && service.serviceId.packages) {
+				const pkg = service.serviceId.packages.find(
+					(p) => p._id && p._id.toString() === service.packageId.toString()
+				);
+				if (pkg && pkg.requiredDocuments) {
+					requiredDocuments = pkg.requiredDocuments;
+				}
+			}
 			
 			return {
 				orderId: service.orderId || "N/A",
@@ -139,7 +125,7 @@ const getCustomerDashboard = async (req, res) => {
 					: "Unassigned",
 				
 				// Document information
-				requiredDocuments: service.serviceId?.requiredDocuments || [],
+				requiredDocuments: requiredDocuments,
 				documents: service.documents || [],
 				
 				// Package & Payment information

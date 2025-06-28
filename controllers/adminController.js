@@ -10,7 +10,7 @@ const Message = require("../models/messageModel");
 const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
 const path = require("path");
-const Lead = require('../models/leadModel');
+const Lead = require("../models/leadModel");
 
 const {
 	handleCustomerEmployeeAssignment,
@@ -260,122 +260,157 @@ const getAllCustomerOrders = async (req, res) => {
 			{
 				$addFields: {
 					// First, ensure we have a valid price - try different sources with fallbacks
-					basePrice: { 
+					basePrice: {
 						$cond: {
 							if: { $gt: [{ $ifNull: ["$services.price", 0] }, 0] },
 							then: "$services.price",
-							else: { 
+							else: {
 								$cond: {
 									if: { $gt: [{ $ifNull: ["$services.paymentAmount", 0] }, 0] },
 									then: "$services.paymentAmount",
 									else: {
 										$cond: {
-											if: { $gt: [{ $size: { $ifNull: ["$serviceDetail.packages", []] } }, 0] },
-											then: { 
-												$ifNull: [
-													{ $arrayElemAt: [{ $map: {
-														input: "$serviceDetail.packages",
-														as: "pkg",
-														in: { 
-															$cond: {
-																if: { $eq: ["$$pkg._id", "$services.packageId"] },
-																then: { $ifNull: ["$$pkg.salePrice", "$$pkg.actualPrice"] },
-																else: null
-															}
-														}
-													}}, 0] },
-													{ $ifNull: [
-														{ $arrayElemAt: ["$serviceDetail.packages.salePrice", 0] },
-														{ $arrayElemAt: ["$serviceDetail.packages.actualPrice", 0] }
-													]}
-												]
+											if: {
+												$gt: [
+													{
+														$size: { $ifNull: ["$serviceDetail.packages", []] },
+													},
+													0,
+												],
 											},
-											else: 0
-										}
-									}
-								}
-							}
-						}
+											then: {
+												$ifNull: [
+													{
+														$arrayElemAt: [
+															{
+																$map: {
+																	input: "$serviceDetail.packages",
+																	as: "pkg",
+																	in: {
+																		$cond: {
+																			if: {
+																				$eq: [
+																					"$$pkg._id",
+																					"$services.packageId",
+																				],
+																			},
+																			then: {
+																				$ifNull: [
+																					"$$pkg.salePrice",
+																					"$$pkg.actualPrice",
+																				],
+																			},
+																			else: null,
+																		},
+																	},
+																},
+															},
+															0,
+														],
+													},
+													{
+														$ifNull: [
+															{
+																$arrayElemAt: [
+																	"$serviceDetail.packages.salePrice",
+																	0,
+																],
+															},
+															{
+																$arrayElemAt: [
+																	"$serviceDetail.packages.actualPrice",
+																	0,
+																],
+															},
+														],
+													},
+												],
+											},
+											else: 0,
+										},
+									},
+								},
+							},
+						},
 					},
 					// Get GST rate from service, default to 18% if not specified
-					gstRate: { 
-						$ifNull: ["$services.gstRate", { $ifNull: ["$serviceDetail.gstRate", 18] }]
+					gstRate: {
+						$ifNull: [
+							"$services.gstRate",
+							{ $ifNull: ["$serviceDetail.gstRate", 18] },
+						],
 					},
 					// Determine if this is an interstate transaction
-					isInterstate: { $ifNull: ["$services.isInterstate", false] }
-				}
+					isInterstate: { $ifNull: ["$services.isInterstate", false] },
+				},
 			},
 			{
 				$addFields: {
 					// Now calculate GST based on whether amount includes GST already
 					gstIncluded: { $ifNull: ["$services.gstIncluded", true] },
-					taxableAmount: { 
+					taxableAmount: {
 						$cond: {
 							if: { $eq: [{ $ifNull: ["$services.gstIncluded", true] }, true] },
-							then: { $divide: ["$basePrice", { $add: [1, { $divide: ["$gstRate", 100] }] }] },
-							else: "$basePrice"
-						}
-					}
-				}
+							then: {
+								$divide: [
+									"$basePrice",
+									{ $add: [1, { $divide: ["$gstRate", 100] }] },
+								],
+							},
+							else: "$basePrice",
+						},
+					},
+				},
 			},
 			{
 				$addFields: {
 					// Calculate CGST and SGST (half of GST rate each)
-					calculatedCGST: { 
+					calculatedCGST: {
 						$cond: {
 							if: { $eq: ["$isInterstate", true] },
 							then: 0,
 							else: {
 								$multiply: [
-									"$taxableAmount", 
-									{ $divide: ["$gstRate", 200] } // Half of GST rate divided by 100
-								]
-							}
-						}
+									"$taxableAmount",
+									{ $divide: ["$gstRate", 200] }, // Half of GST rate divided by 100
+								],
+							},
+						},
 					},
-					calculatedSGST: { 
+					calculatedSGST: {
 						$cond: {
 							if: { $eq: ["$isInterstate", true] },
 							then: 0,
 							else: {
 								$multiply: [
-									"$taxableAmount", 
-									{ $divide: ["$gstRate", 200] } // Half of GST rate divided by 100
-								]
-							}
-						}
+									"$taxableAmount",
+									{ $divide: ["$gstRate", 200] }, // Half of GST rate divided by 100
+								],
+							},
+						},
 					},
 					// For IGST (used in interstate transactions)
-					calculatedIGST: { 
+					calculatedIGST: {
 						$cond: {
 							if: { $eq: ["$isInterstate", true] },
-							then: { 
-								$multiply: [
-									"$taxableAmount", 
-									{ $divide: ["$gstRate", 100] }
-								]
+							then: {
+								$multiply: ["$taxableAmount", { $divide: ["$gstRate", 100] }],
 							},
-							else: 0
-						}
+							else: 0,
+						},
 					},
 					totalTax: {
 						$cond: {
 							if: { $eq: ["$isInterstate", true] },
-							then: { 
-								$multiply: [
-									"$taxableAmount", 
-									{ $divide: ["$gstRate", 100] }
-								]
+							then: {
+								$multiply: ["$taxableAmount", { $divide: ["$gstRate", 100] }],
 							},
 							else: {
-								$multiply: [
-									"$taxableAmount", 
-									{ $divide: ["$gstRate", 100] }
-								]
-							}
-						}
-					}
-				}
+								$multiply: ["$taxableAmount", { $divide: ["$gstRate", 100] }],
+							},
+						},
+					},
+				},
 			},
 			{
 				$project: {
@@ -392,68 +427,96 @@ const getAllCustomerOrders = async (req, res) => {
 					"Service Name": "$serviceDetail.name",
 					"Package Name": "$services.packageName",
 					"Service Price": "$taxableAmount", // The base price excluding GST
-					"Discounts": { 
-						$ifNull: ["$services.discount", { 
-							$cond: {
-								if: { $and: [
-									{ $gt: [{ $size: { $ifNull: ["$serviceDetail.packages", []] } }, 0] },
-									{ $ne: ["$services.packageId", null] }
-								]},
-								then: {
-									$subtract: [
-										{ $ifNull: [
-											{ $arrayElemAt: [{ $map: {
-												input: "$serviceDetail.packages",
-												as: "pkg",
-												in: { 
-													$cond: {
-														if: { $eq: ["$$pkg._id", "$services.packageId"] },
-														then: "$$pkg.actualPrice",
-														else: null
-													}
-												}
-											}}, 0] },
-											{ $arrayElemAt: ["$serviceDetail.packages.actualPrice", 0] }
-										]},
-										"$taxableAmount"
-									]
+					Discounts: {
+						$ifNull: [
+							"$services.discount",
+							{
+								$cond: {
+									if: {
+										$and: [
+											{
+												$gt: [
+													{
+														$size: { $ifNull: ["$serviceDetail.packages", []] },
+													},
+													0,
+												],
+											},
+											{ $ne: ["$services.packageId", null] },
+										],
+									},
+									then: {
+										$subtract: [
+											{
+												$ifNull: [
+													{
+														$arrayElemAt: [
+															{
+																$map: {
+																	input: "$serviceDetail.packages",
+																	as: "pkg",
+																	in: {
+																		$cond: {
+																			if: {
+																				$eq: [
+																					"$$pkg._id",
+																					"$services.packageId",
+																				],
+																			},
+																			then: "$$pkg.actualPrice",
+																			else: null,
+																		},
+																	},
+																},
+															},
+															0,
+														],
+													},
+													{
+														$arrayElemAt: [
+															"$serviceDetail.packages.actualPrice",
+															0,
+														],
+													},
+												],
+											},
+											"$taxableAmount",
+										],
+									},
+									else: 0,
 								},
-								else: 0
-							}
-						}]
+							},
+						],
 					},
-					"IGST Amount": { 
+					"IGST Amount": {
 						$cond: {
 							if: { $eq: ["$isInterstate", true] },
 							then: "$calculatedIGST",
-							else: { $ifNull: ["$services.igst", 0] }
-						}
+							else: { $ifNull: ["$services.igst", 0] },
+						},
 					},
-					"CGST Amount": { 
+					"CGST Amount": {
 						$cond: {
 							if: { $ne: ["$isInterstate", true] },
 							then: "$calculatedCGST",
-							else: { $ifNull: ["$services.cgst", 0] }
-						}
+							else: { $ifNull: ["$services.cgst", 0] },
+						},
 					},
-					"SGST Amount": { 
+					"SGST Amount": {
 						$cond: {
 							if: { $ne: ["$isInterstate", true] },
 							then: "$calculatedSGST",
-							else: { $ifNull: ["$services.sgst", 0] }
-						}
+							else: { $ifNull: ["$services.sgst", 0] },
+						},
 					},
 					"Total Order Value": {
 						$cond: {
 							if: { $gt: [{ $ifNull: ["$services.paymentAmount", 0] }, 0] },
-							then: "$services.paymentAmount", 
+							then: "$services.paymentAmount",
 							else: {
-								$add: [
-									"$taxableAmount",
-									"$totalTax"
-								]
-							}
-						}
+								$add: ["$taxableAmount", "$totalTax"],
+							},
+						},
 					},
 					"Order Status": "$services.status",
 					"Order Completion Date": "$services.completionDate",
@@ -461,84 +524,100 @@ const getAllCustomerOrders = async (req, res) => {
 					"Reason for Delay": "$services.delayReason",
 					"Feedback Status": {
 						$cond: {
-							if: { $gt: [{ $size: { $ifNull: ["$services.feedback", []] } }, 0] },
+							if: {
+								$gt: [{ $size: { $ifNull: ["$services.feedback", []] } }, 0],
+							},
 							then: "Received",
 							else: "Pending",
 						},
 					},
-					"Feedback": { 
+					Feedback: {
+						$ifNull: [{ $arrayElemAt: ["$services.feedback.feedback", 0] }, ""],
+					},
+					Rating: {
+						$ifNull: [{ $arrayElemAt: ["$services.feedback.rating", 0] }, 0],
+					},
+					"Payment Method": {
 						$ifNull: [
-							{ $arrayElemAt: ["$services.feedback.feedback", 0] },
-							""
-						]
+							"$services.paymentMethod",
+							{ $arrayElemAt: ["$paymentHistory.paymentMethod", 0] },
+						],
 					},
-					"Rating": { 
-						$ifNull: [
-							{ $arrayElemAt: ["$services.feedback.rating", 0] },
-							0
-						]
-					},
-					"Payment Method": { 
-						$ifNull: ["$services.paymentMethod", { $arrayElemAt: ["$paymentHistory.paymentMethod", 0] }]
-					},
-					"Payment Status": { 
+					"Payment Status": {
 						$cond: {
 							if: { $gt: ["$services.paymentAmount", 0] },
 							then: "success",
-							else: { $ifNull: [{ $arrayElemAt: ["$paymentHistory.status", 0] }, "pending"] }
-						}
+							else: {
+								$ifNull: [
+									{ $arrayElemAt: ["$paymentHistory.status", 0] },
+									"pending",
+								],
+							},
+						},
 					},
-					"Refund Status": { $ifNull: ["$services.refundStatus", "Not Requested"] },
-					"Razorpay Order ID": { 
-						$ifNull: ["$services.paymentReference", { $arrayElemAt: ["$paymentHistory.paymentId", 0] }]
+					"Refund Status": {
+						$ifNull: ["$services.refundStatus", "Not Requested"],
+					},
+					"Razorpay Order ID": {
+						$ifNull: [
+							"$services.paymentReference",
+							{ $arrayElemAt: ["$paymentHistory.paymentId", 0] },
+						],
 					},
 					"Invoice Receipt": "$services.invoiceUrl",
 					// Add raw data for debugging
-					"_rawServicePrice": "$basePrice",
-					"_rawTaxableAmount": "$taxableAmount",
-					"_rawGstRate": "$gstRate",
-					"_rawPackageName": "$services.packageName",
-					"_rawIsInterstate": "$isInterstate",
-					"_rawGstIncluded": "$gstIncluded",
-					"_rawPackageId": "$services.packageId",
-					"_rawPackages": "$serviceDetail.packages",
-					"_rawPaymentAmount": "$services.paymentAmount",
-					"_rawPaymentMethod": "$services.paymentMethod",
-					"_rawFeedback": "$services.feedback",
+					_rawServicePrice: "$basePrice",
+					_rawTaxableAmount: "$taxableAmount",
+					_rawGstRate: "$gstRate",
+					_rawPackageName: "$services.packageName",
+					_rawIsInterstate: "$isInterstate",
+					_rawGstIncluded: "$gstIncluded",
+					_rawPackageId: "$services.packageId",
+					_rawPackages: "$serviceDetail.packages",
+					_rawPaymentAmount: "$services.paymentAmount",
+					_rawPaymentMethod: "$services.paymentMethod",
+					_rawFeedback: "$services.feedback",
 				},
 			},
 		]);
 
 		console.log(`Processed ${customers.length} orders`);
-		
+
 		// Log a sample of the first order for debugging
 		if (customers.length > 0) {
-			console.log("Sample order data:", JSON.stringify({
-				orderId: customers[0]["Order ID"],
-				serviceName: customers[0]["Service Name"],
-				packageName: customers[0]["Package Name"],
-				servicePrice: customers[0]["Service Price"],
-				cgst: customers[0]["CGST Amount"],
-				sgst: customers[0]["SGST Amount"],
-				igst: customers[0]["IGST Amount"],
-				totalValue: customers[0]["Total Order Value"],
-				paymentMethod: customers[0]["Payment Method"],
-				paymentStatus: customers[0]["Payment Status"],
-				feedback: customers[0]["Feedback"],
-				rating: customers[0]["Rating"],
-				_debug: {
-					rawPrice: customers[0]["_rawServicePrice"],
-					rawTaxableAmount: customers[0]["_rawTaxableAmount"],
-					rawGstRate: customers[0]["_rawGstRate"],
-					rawPackageName: customers[0]["_rawPackageName"],
-					rawIsInterstate: customers[0]["_rawIsInterstate"],
-					rawGstIncluded: customers[0]["_rawGstIncluded"],
-					rawPackageId: customers[0]["_rawPackageId"],
-					rawPaymentAmount: customers[0]["_rawPaymentAmount"],
-					rawPaymentMethod: customers[0]["_rawPaymentMethod"],
-					rawFeedback: customers[0]["_rawFeedback"]
-				}
-			}, null, 2));
+			console.log(
+				"Sample order data:",
+				JSON.stringify(
+					{
+						orderId: customers[0]["Order ID"],
+						serviceName: customers[0]["Service Name"],
+						packageName: customers[0]["Package Name"],
+						servicePrice: customers[0]["Service Price"],
+						cgst: customers[0]["CGST Amount"],
+						sgst: customers[0]["SGST Amount"],
+						igst: customers[0]["IGST Amount"],
+						totalValue: customers[0]["Total Order Value"],
+						paymentMethod: customers[0]["Payment Method"],
+						paymentStatus: customers[0]["Payment Status"],
+						feedback: customers[0]["Feedback"],
+						rating: customers[0]["Rating"],
+						_debug: {
+							rawPrice: customers[0]["_rawServicePrice"],
+							rawTaxableAmount: customers[0]["_rawTaxableAmount"],
+							rawGstRate: customers[0]["_rawGstRate"],
+							rawPackageName: customers[0]["_rawPackageName"],
+							rawIsInterstate: customers[0]["_rawIsInterstate"],
+							rawGstIncluded: customers[0]["_rawGstIncluded"],
+							rawPackageId: customers[0]["_rawPackageId"],
+							rawPaymentAmount: customers[0]["_rawPaymentAmount"],
+							rawPaymentMethod: customers[0]["_rawPaymentMethod"],
+							rawFeedback: customers[0]["_rawFeedback"],
+						},
+					},
+					null,
+					2
+				)
+			);
 		}
 
 		res.status(200).json({
@@ -781,7 +860,7 @@ const createService = async (req, res) => {
 	const {
 		category,
 		name,
-		description,
+		// description,
 		hsncode,
 		currency,
 		packages,
@@ -790,18 +869,20 @@ const createService = async (req, res) => {
 
 	try {
 		// Validate that we have all required fields
-		if (!category || !name || !description || !hsncode) {
+		if (!category || !name || !hsncode) {
 			return res.status(400).json({ message: "Missing required fields" });
 		}
 
 		// Make packages entirely optional
 		// If packages is an empty array or null/undefined, set to empty array
-		const servicePackages = Array.isArray(packages) ? packages.filter(pkg => pkg && Object.keys(pkg).length > 0) : [];
+		const servicePackages = Array.isArray(packages)
+			? packages.filter((pkg) => pkg && Object.keys(pkg).length > 0)
+			: [];
 
 		const newService = new Service({
 			category,
 			name,
-			description,
+			// description,
 			hsncode,
 			currency: currency || "INR",
 			packages: servicePackages,
@@ -812,7 +893,9 @@ const createService = async (req, res) => {
 		res.status(201).json({ service: newService });
 	} catch (err) {
 		console.error("Error creating service:", err);
-		res.status(500).json({ message: "Error creating service", error: err.message });
+		res
+			.status(500)
+			.json({ message: "Error creating service", error: err.message });
 	}
 };
 
@@ -821,7 +904,7 @@ const updateService = async (req, res) => {
 	const {
 		category,
 		name,
-		description,
+		// description,
 		hsncode,
 		currency,
 		packages,
@@ -830,13 +913,15 @@ const updateService = async (req, res) => {
 
 	try {
 		// Validate required fields
-		if (!category || !name || !description || !hsncode) {
+		if (!category || !name || !hsncode) {
 			return res.status(400).json({ message: "Missing required fields" });
 		}
 
 		// Make packages entirely optional
 		// If packages is an empty array or null/undefined, set to empty array
-		const servicePackages = Array.isArray(packages) ? packages.filter(pkg => pkg && Object.keys(pkg).length > 0) : [];
+		const servicePackages = Array.isArray(packages)
+			? packages.filter((pkg) => pkg && Object.keys(pkg).length > 0)
+			: [];
 
 		// Find the service
 		const service = await Service.findById(serviceId);
@@ -850,7 +935,7 @@ const updateService = async (req, res) => {
 			{
 				category,
 				name,
-				description,
+				// description,
 				hsncode,
 				currency: currency || "INR",
 				packages: servicePackages,
@@ -866,24 +951,31 @@ const updateService = async (req, res) => {
 		// Find users who have this service and update their due dates if processing days changed
 		for (let i = 0; i < newPackages.length; i++) {
 			const newPkg = newPackages[i];
-			const oldPkg = oldPackages.find(p => p._id && p._id.toString() === newPkg._id);
+			const oldPkg = oldPackages.find(
+				(p) => p._id && p._id.toString() === newPkg._id
+			);
 
 			if (oldPkg && newPkg.processingDays !== oldPkg.processingDays) {
 				const daysDifference = newPkg.processingDays - oldPkg.processingDays;
 
 				// Find all users with this service and update their due dates
 				const users = await User.find({ "services.serviceId": serviceId });
-				
+
 				for (const user of users) {
-					const serviceIndex = user.services.findIndex(s => 
-						s.serviceId.toString() === serviceId
+					const serviceIndex = user.services.findIndex(
+						(s) => s.serviceId.toString() === serviceId
 					);
 
-					if (serviceIndex !== -1 && user.services[serviceIndex].status === "In Process") {
+					if (
+						serviceIndex !== -1 &&
+						user.services[serviceIndex].status === "In Process"
+					) {
 						// Update the due date
-						const currentDueDate = new Date(user.services[serviceIndex].dueDate);
+						const currentDueDate = new Date(
+							user.services[serviceIndex].dueDate
+						);
 						currentDueDate.setDate(currentDueDate.getDate() + daysDifference);
-						
+
 						user.services[serviceIndex].dueDate = currentDueDate;
 						await user.save();
 					}
@@ -1035,7 +1127,7 @@ const createEmployee = async (req, res) => {
 			!Array.isArray(services) ||
 			services.length === 0 ||
 			!username ||
-			!password 
+			!password
 			// !L1EmpCode
 		) {
 			return res
@@ -1712,50 +1804,54 @@ const toggleServiceActivation = async (req, res) => {
 const getAllLeads = async (req, res) => {
 	try {
 		const leads = await Lead.find()
-			.populate('serviceId', 'name category')
-			.populate('assignedToEmployee', 'name email')
+			.populate("serviceId", "name category")
+			.populate("assignedToEmployee", "name email")
 			.sort({ createdAt: -1 });
-		
+
 		res.status(200).json({ leads });
 	} catch (error) {
-		console.error('Error fetching leads:', error);
-		res.status(500).json({ message: 'Error fetching leads', error: error.message });
+		console.error("Error fetching leads:", error);
+		res
+			.status(500)
+			.json({ message: "Error fetching leads", error: error.message });
 	}
 };
 
 // Assign lead to employee
 const assignLeadToEmployee = async (req, res) => {
 	const { leadId, employeeId } = req.body;
-	
+
 	try {
 		// Find the lead
 		const lead = await Lead.findById(leadId);
 		if (!lead) {
-			return res.status(404).json({ message: 'Lead not found' });
+			return res.status(404).json({ message: "Lead not found" });
 		}
-		
+
 		// Check if lead is already assigned
-		if (lead.status !== 'new') {
-			return res.status(400).json({ message: `Lead is already ${lead.status}` });
+		if (lead.status !== "new") {
+			return res
+				.status(400)
+				.json({ message: `Lead is already ${lead.status}` });
 		}
-		
+
 		// Find the employee
-		const employee = await User.findOne({ _id: employeeId, role: 'employee' });
+		const employee = await User.findOne({ _id: employeeId, role: "employee" });
 		if (!employee) {
-			return res.status(404).json({ message: 'Employee not found' });
+			return res.status(404).json({ message: "Employee not found" });
 		}
-		
+
 		// Update lead status
-		lead.status = 'assigned';
+		lead.status = "assigned";
 		lead.assignedToEmployee = employeeId;
 		lead.assignedAt = new Date();
-		
+
 		await lead.save();
-		
+
 		// Notify the employee
 		await sendEmail(
 			employee.email,
-			'New Lead Assigned',
+			"New Lead Assigned",
 			`Dear ${employee.name},
 
 A new lead has been assigned to you:
@@ -1764,21 +1860,23 @@ Lead Details:
 - Name: ${lead.name}
 			- Email: ${lead.email}
 			- Phone: ${lead.mobile}
-			- Service: ${lead.serviceId.name || 'N/A'}
+			- Service: ${lead.serviceId.name || "N/A"}
 			
 			Please review this lead in your dashboard and take appropriate action.
 			
 			Best regards,
 			FinShelter Team`
 		);
-		
-		res.status(200).json({ 
-			message: 'Lead assigned successfully',
-			lead 
+
+		res.status(200).json({
+			message: "Lead assigned successfully",
+			lead,
 		});
 	} catch (error) {
-		console.error('Error assigning lead:', error);
-		res.status(500).json({ message: 'Error assigning lead', error: error.message });
+		console.error("Error assigning lead:", error);
+		res
+			.status(500)
+			.json({ message: "Error assigning lead", error: error.message });
 	}
 };
 
@@ -1786,39 +1884,44 @@ Lead Details:
 const acceptLead = async (req, res) => {
 	const { leadId } = req.params;
 	const employee = req.user; // From auth middleware
-	
+
 	try {
 		// Find the lead
-		const lead = await Lead.findById(leadId)
-			.populate('serviceId');
-		
+		const lead = await Lead.findById(leadId).populate("serviceId");
+
 		if (!lead) {
-			return res.status(404).json({ message: 'Lead not found' });
+			return res.status(404).json({ message: "Lead not found" });
 		}
-		
+
 		// Check if lead is assigned to this employee
 		if (lead.assignedToEmployee.toString() !== employee._id.toString()) {
-			return res.status(403).json({ message: 'This lead is not assigned to you' });
+			return res
+				.status(403)
+				.json({ message: "This lead is not assigned to you" });
 		}
-		
+
 		// Check if lead is in the correct status
-		if (lead.status !== 'assigned') {
-			return res.status(400).json({ message: `Lead cannot be accepted because it is ${lead.status}` });
+		if (lead.status !== "assigned") {
+			return res.status(400).json({
+				message: `Lead cannot be accepted because it is ${lead.status}`,
+			});
 		}
-		
+
 		// Update lead status
-		lead.status = 'accepted';
+		lead.status = "accepted";
 		lead.acceptedAt = new Date();
-		
+
 		await lead.save();
-		
-		res.status(200).json({ 
-			message: 'Lead accepted successfully',
-			lead 
+
+		res.status(200).json({
+			message: "Lead accepted successfully",
+			lead,
 		});
 	} catch (error) {
-		console.error('Error accepting lead:', error);
-		res.status(500).json({ message: 'Error accepting lead', error: error.message });
+		console.error("Error accepting lead:", error);
+		res
+			.status(500)
+			.json({ message: "Error accepting lead", error: error.message });
 	}
 };
 
@@ -1827,38 +1930,44 @@ const declineLead = async (req, res) => {
 	const { leadId } = req.params;
 	const { reason } = req.body;
 	const employee = req.user; // From auth middleware
-	
+
 	try {
 		// Find the lead
 		const lead = await Lead.findById(leadId);
 		if (!lead) {
-			return res.status(404).json({ message: 'Lead not found' });
+			return res.status(404).json({ message: "Lead not found" });
 		}
-		
+
 		// Check if lead is assigned to this employee
 		if (lead.assignedToEmployee.toString() !== employee._id.toString()) {
-			return res.status(403).json({ message: 'This lead is not assigned to you' });
+			return res
+				.status(403)
+				.json({ message: "This lead is not assigned to you" });
 		}
-		
+
 		// Check if lead is in the correct status
-		if (lead.status !== 'assigned') {
-			return res.status(400).json({ message: `Lead cannot be declined because it is ${lead.status}` });
+		if (lead.status !== "assigned") {
+			return res.status(400).json({
+				message: `Lead cannot be declined because it is ${lead.status}`,
+			});
 		}
-		
+
 		// Update lead status
-		lead.status = 'declined';
+		lead.status = "declined";
 		lead.declinedAt = new Date();
-		lead.declineReason = reason || 'No reason provided';
-		
+		lead.declineReason = reason || "No reason provided";
+
 		await lead.save();
-		
-		res.status(200).json({ 
-			message: 'Lead declined successfully',
-			lead 
+
+		res.status(200).json({
+			message: "Lead declined successfully",
+			lead,
 		});
 	} catch (error) {
-		console.error('Error declining lead:', error);
-		res.status(500).json({ message: 'Error declining lead', error: error.message });
+		console.error("Error declining lead:", error);
+		res
+			.status(500)
+			.json({ message: "Error declining lead", error: error.message });
 	}
 };
 
@@ -1866,47 +1975,50 @@ const declineLead = async (req, res) => {
 const convertLeadToOrder = async (req, res) => {
 	const { leadId, paymentDetails } = req.body;
 	const { packageId, isInterstate } = paymentDetails; // Extract packageId and isInterstate flag
-	
+
 	try {
 		// Find the lead
 		const lead = await Lead.findById(leadId)
-			.populate('serviceId')
-			.populate('assignedToEmployee');
-		
+			.populate("serviceId")
+			.populate("assignedToEmployee");
+
 		if (!lead) {
-			return res.status(404).json({ message: 'Lead not found' });
+			return res.status(404).json({ message: "Lead not found" });
 		}
-		
+
 		// Check if lead is accepted
-		if (lead.status !== 'accepted') {
-			return res.status(400).json({ message: `Lead must be accepted before conversion (currently ${lead.status})` });
+		if (lead.status !== "accepted") {
+			return res.status(400).json({
+				message: `Lead must be accepted before conversion (currently ${lead.status})`,
+			});
 		}
-		
+
 		// Generate a unique username if not provided
-		const username = lead.email.split('@')[0] + Math.floor(Math.random() * 1000);
-		
+		const username =
+			lead.email.split("@")[0] + Math.floor(Math.random() * 1000);
+
 		// Generate a temporary password
 		const tempPassword = Math.random().toString(36).slice(-8);
-		
+
 		// Create salt and hash password
 		const salt = crypto.randomBytes(16).toString("hex");
 		const hashedPassword = hashPassword(tempPassword, salt);
-		
+
 		// Create new customer user
 		const newUser = new User({
 			name: lead.name,
 			email: lead.email,
 			mobile: lead.mobile,
-			role: 'customer',
+			role: "customer",
 			isActive: true,
 			username,
 			passwordHash: hashedPassword,
 			salt,
-			referralCode: generateReferralCode()
+			referralCode: generateReferralCode(),
 		});
-		
+
 		await newUser.save();
-		
+
 		// Create wallet for the new user
 		const newWallet = new Wallet({
 			userId: newUser._id,
@@ -1914,11 +2026,11 @@ const convertLeadToOrder = async (req, res) => {
 			balance: 0,
 			referralEarnings: 0,
 			transactions: [],
-			withdrawalRequests: []
+			withdrawalRequests: [],
 		});
-		
+
 		await newWallet.save();
-		
+
 		// Handle payment history - prioritize conversion payment over lead payment data to avoid duplication
 		// Only add one payment entry
 		if (paymentDetails && paymentDetails.amount) {
@@ -1940,33 +2052,36 @@ const convertLeadToOrder = async (req, res) => {
 				paymentMethod: lead.paymentDetails.method || "cash",
 			});
 		}
-		
+
 		// Generate order ID
 		const orderId = `ORD${Date.now()}${Math.floor(Math.random() * 1000)}`;
-		
+
 		// Find the selected package if provided and if service has packages
 		let selectedPackage = null;
-		const serviceHasPackages = lead.serviceId.packages && lead.serviceId.packages.length > 0;
-		
+		const serviceHasPackages =
+			lead.serviceId.packages && lead.serviceId.packages.length > 0;
+
 		if (packageId && serviceHasPackages) {
-			selectedPackage = lead.serviceId.packages.find(pkg => pkg._id.toString() === packageId);
+			selectedPackage = lead.serviceId.packages.find(
+				(pkg) => pkg._id.toString() === packageId
+			);
 		} else if (serviceHasPackages) {
 			// Use first package as default if service has packages but none selected
 			selectedPackage = lead.serviceId.packages[0];
 		}
-		
+
 		// Calculate due date based on selected package or default processing days
 		const dueDate = new Date();
 		let processingDays = 7; // Default processing days if no package or processing days specified
-		
+
 		if (selectedPackage && selectedPackage.processingDays) {
 			processingDays = selectedPackage.processingDays;
 		} else if (lead.serviceId.processingDays) {
 			processingDays = lead.serviceId.processingDays;
 		}
-		
+
 		dueDate.setDate(dueDate.getDate() + processingDays);
-		
+
 		// Get the base price from payment details or package
 		let basePrice = 0;
 		if (paymentDetails && paymentDetails.amount) {
@@ -1974,22 +2089,24 @@ const convertLeadToOrder = async (req, res) => {
 		} else if (selectedPackage) {
 			basePrice = selectedPackage.salePrice || selectedPackage.actualPrice;
 		}
-		
+
 		// Get GST rate from service, default to 18% if not specified
 		const gstRate = lead.serviceId.gstRate || 18;
-		
+
 		// Calculate GST amounts
-		let cgst = 0, sgst = 0, igst = 0;
-		
+		let cgst = 0,
+			sgst = 0,
+			igst = 0;
+
 		// If payment amount includes GST, back-calculate the base amount and taxes
 		const paymentIncludesGST = true; // This could be a parameter from the request
-		
+
 		if (paymentIncludesGST) {
 			// If the payment amount includes GST, calculate the base amount
-			const gstFactor = 1 + (gstRate / 100);
+			const gstFactor = 1 + gstRate / 100;
 			const baseAmount = basePrice / gstFactor;
 			const totalGST = basePrice - baseAmount;
-			
+
 			if (isInterstate) {
 				igst = totalGST;
 			} else {
@@ -2005,18 +2122,18 @@ const convertLeadToOrder = async (req, res) => {
 				sgst = basePrice * (gstRate / 200); // Half of GST rate
 			}
 		}
-		
+
 		// Log the tax calculations for debugging
 		console.log(`Tax Calculation for Order ${orderId}:`, {
 			basePrice,
 			gstRate,
 			isInterstate,
-			cgst, 
+			cgst,
 			sgst,
 			igst,
-			total: basePrice + (isInterstate ? igst : (cgst + sgst))
+			total: basePrice + (isInterstate ? igst : cgst + sgst),
 		});
-		
+
 		// Create service order with package information if available
 		const serviceOrder = {
 			orderId,
@@ -2024,14 +2141,14 @@ const convertLeadToOrder = async (req, res) => {
 			activated: true,
 			purchasedAt: new Date(),
 			employeeId: lead.assignedToEmployee ? lead.assignedToEmployee._id : null,
-			status: 'In Process',
+			status: "In Process",
 			dueDate,
 			documents: [],
 			queries: [],
 			// Add payment details to the service order
 			paymentAmount: basePrice,
-			paymentMethod: paymentDetails.method || 'cash',
-			paymentReference: paymentDetails.reference || '',
+			paymentMethod: paymentDetails.method || "cash",
+			paymentReference: paymentDetails.reference || "",
 			price: basePrice,
 			// Add tax information
 			isInterstate: !!isInterstate,
@@ -2039,42 +2156,42 @@ const convertLeadToOrder = async (req, res) => {
 			sgst: sgst,
 			igst: igst,
 			gstRate: gstRate,
-			gstIncluded: paymentIncludesGST
+			gstIncluded: paymentIncludesGST,
 		};
-		
+
 		// Add package details if a package was selected
 		if (selectedPackage) {
 			serviceOrder.packageId = selectedPackage._id;
 			serviceOrder.packageName = selectedPackage.name;
 		}
-		
+
 		// Add service order to user
 		newUser.services.push(serviceOrder);
 		await newUser.save();
-		
+
 		// Update lead status
-		lead.status = 'converted';
+		lead.status = "converted";
 		lead.convertedToOrderId = orderId;
 		lead.convertedAt = new Date();
 		await lead.save();
-		
+
 		// Prepare email content with package information and tax details
-		let packageInfo = '';
+		let packageInfo = "";
 		if (selectedPackage) {
 			packageInfo = `
 - Package: ${selectedPackage.name}
 - Base Price: ₹${basePrice.toFixed(2)}`;
 		}
-		
-		const taxInfo = isInterstate ? 
-			`- IGST (${gstRate}%): ₹${igst.toFixed(2)}` : 
-			`- CGST (${gstRate/2}%): ₹${cgst.toFixed(2)}
-- SGST (${gstRate/2}%): ₹${sgst.toFixed(2)}`;
-		
+
+		const taxInfo = isInterstate
+			? `- IGST (${gstRate}%): ₹${igst.toFixed(2)}`
+			: `- CGST (${gstRate / 2}%): ₹${cgst.toFixed(2)}
+- SGST (${gstRate / 2}%): ₹${sgst.toFixed(2)}`;
+
 		// Send welcome email to the customer
 		await sendEmail(
 			lead.email,
-			'Welcome to FinShelter - Your Account and Order Details',
+			"Welcome to FinShelter - Your Account and Order Details",
 			`Dear ${lead.name},
 
 Thank you for choosing FinShelter. We are pleased to inform you that your account has been created and your service order has been processed.
@@ -2083,7 +2200,7 @@ LOGIN INFORMATION:
 - Email: ${lead.email}
 - Password: ${tempPassword}
 
-Please go to http://localhost:5173/customers/login to log in with the above credentials.
+Please go to https://thefinshelter.com/customers/login to log in with the above credentials.
 
 
 ORDER DETAILS:
@@ -2101,55 +2218,59 @@ If you have any questions, please contact our support team.
 Best regards,
 FinShelter Team`
 		);
-		
+
 		res.status(200).json({
-			message: 'Lead converted to customer and order successfully',
+			message: "Lead converted to customer and order successfully",
 			user: newUser,
-			orderId
+			orderId,
 		});
 	} catch (error) {
-		console.error('Error converting lead:', error);
-		res.status(500).json({ message: 'Error converting lead', error: error.message });
+		console.error("Error converting lead:", error);
+		res
+			.status(500)
+			.json({ message: "Error converting lead", error: error.message });
 	}
 };
 
 // Send an approved lead back to the employee
 const sendLeadBackToEmployee = async (req, res) => {
 	const { leadId, message } = req.body;
-	
+
 	try {
 		// Find the lead
 		const lead = await Lead.findById(leadId)
-			.populate('serviceId')
-			.populate('assignedToEmployee');
-		
+			.populate("serviceId")
+			.populate("assignedToEmployee");
+
 		if (!lead) {
-			return res.status(404).json({ message: 'Lead not found' });
+			return res.status(404).json({ message: "Lead not found" });
 		}
-		
+
 		// Check if lead is already in 'accepted' status
-		if (lead.status !== 'accepted') {
-			return res.status(400).json({ 
-				message: `Only accepted leads can be sent back (current status: ${lead.status})` 
+		if (lead.status !== "accepted") {
+			return res.status(400).json({
+				message: `Only accepted leads can be sent back (current status: ${lead.status})`,
 			});
 		}
-		
+
 		// Ensure lead is assigned to an employee
 		if (!lead.assignedToEmployee) {
-			return res.status(400).json({ message: 'Lead is not assigned to any employee' });
-		} 
-		
+			return res
+				.status(400)
+				.json({ message: "Lead is not assigned to any employee" });
+		}
+
 		// Update lead status back to 'assigned' and add admin note
-		lead.status = 'assigned';
-		lead.adminNote = message || 'Lead sent back by admin for review.';
+		lead.status = "assigned";
+		lead.adminNote = message || "Lead sent back by admin for review.";
 		lead.sentBackAt = new Date();
-		
+
 		await lead.save();
-		
+
 		// Notify the employee
 		await sendEmail(
 			lead.assignedToEmployee.email,
-			'Lead Requires Review',
+			"Lead Requires Review",
 			`Dear ${lead.assignedToEmployee.name},
 
 A lead that you previously approved has been sent back for review by the admin:
@@ -2158,7 +2279,7 @@ Lead Details:
 - Name: ${lead.name}
 - Email: ${lead.email}
 - Mobile: ${lead.mobile}
-- Service: ${lead.serviceId?.name || 'N/A'}
+- Service: ${lead.serviceId?.name || "N/A"}
 
 Admin Note: ${lead.adminNote}
 
@@ -2167,15 +2288,88 @@ Please review this lead in your dashboard and take appropriate action.
 Best regards,
 Admin Team`
 		);
-		
-		res.status(200).json({ 
-			message: 'Lead sent back to employee successfully',
-			lead 
+
+		res.status(200).json({
+			message: "Lead sent back to employee successfully",
+			lead,
 		});
 	} catch (error) {
-		console.error('Error sending lead back to employee:', error);
-		res.status(500).json({ message: 'Error sending lead back to employee', error: error.message });
+		console.error("Error sending lead back to employee:", error);
+		res.status(500).json({
+			message: "Error sending lead back to employee",
+			error: error.message,
+		});
 	}
+};
+
+const sendOrderForL1Review = async (req, res) => {
+    try {
+        const { orderId, employeeId } = req.body;
+        
+        // Find the customer with the given order ID
+        const customer = await User.findOne({
+            "services.orderId": orderId,
+            role: "customer"
+        });
+
+        if (!customer) {
+            return res.status(404).json({
+                success: false,
+                message: "Order not found"
+            });
+        }
+
+        // Find the service index
+        const serviceIndex = customer.services.findIndex(
+            (service) => service.orderId === orderId
+        );
+
+        if (serviceIndex === -1) {
+            return res.status(404).json({
+                success: false,
+                message: "Service not found"
+            });
+        }
+
+        // Find the employee who is sending for review
+        const employee = await User.findById(employeeId);
+        if (!employee || !employee.l1EmployeeId) {
+            return res.status(400).json({
+                success: false,
+                message: "Employee not found or no L1 assigned"
+            });
+        }
+
+        // Update the service status and add L1 review info
+        customer.services[serviceIndex].status = "pending-l1-review";
+        customer.services[serviceIndex].l1ReviewerId = employee.l1EmployeeId;
+        customer.services[serviceIndex].sentForReviewAt = new Date();
+
+        await customer.save();
+
+        // Send email notification to L1 employee
+        const l1Employee = await User.findById(employee.l1EmployeeId);
+        if (l1Employee) {
+            await sendEmail(
+                l1Employee.email,
+                "New Order Review Request",
+                `Hello ${l1Employee.name},\n\nA new order #${orderId} requires your review. Please check your dashboard for details.`
+            );
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Order sent for L1 review successfully"
+        });
+
+    } catch (error) {
+        console.error("Error sending order for L1 review:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error sending order for L1 review",
+            error: error.message
+        });
+    }
 };
 
 module.exports = {
@@ -2218,5 +2412,6 @@ module.exports = {
 	acceptLead,
 	declineLead,
 	convertLeadToOrder,
-	sendLeadBackToEmployee
-};
+	sendLeadBackToEmployee,
+	sendOrderForL1Review,
+}; 
