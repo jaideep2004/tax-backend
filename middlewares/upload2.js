@@ -75,7 +75,6 @@ const upload = multer({
 	},
 });
 
-// Enhanced error handling middleware
 // Updated upload middleware configuration
 const uploadMiddleware2 = multer({
 	storage: multer.diskStorage({
@@ -84,7 +83,16 @@ const uploadMiddleware2 = multer({
 			if (!fs.existsSync(uploadDir)) {
 				fs.mkdirSync(uploadDir, { recursive: true, mode: 0o755 });
 			}
-			cb(null, uploadDir);
+			
+			// Store files in a consistent location
+			// Optionally create customer-specific folders
+			const customerId = req.body.userId || 'common';
+			const customerDir = path.join(uploadDir, customerId.toString());
+			if (!fs.existsSync(customerDir)) {
+				fs.mkdirSync(customerDir, { recursive: true, mode: 0o755 });
+			}
+			
+			cb(null, customerDir);
 		},
 		filename: function (req, file, cb) {
 			const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
@@ -95,14 +103,13 @@ const uploadMiddleware2 = multer({
 				null,
 				`${sanitizedName}-${uniqueSuffix}${path.extname(file.originalname)}`
 			);
-		},
+		}
 	}),
 	fileFilter: (req, file, cb) => {
 		const allowedTypes = [
 			"image/jpeg",
 			"image/png",
 			"image/gif",
-		
 			"application/pdf",
 		];
 		if (allowedTypes.includes(file.mimetype)) {

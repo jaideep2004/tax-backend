@@ -31,6 +31,7 @@ const {
 	forgotPassword,
 	resetPassword,
 	verifyResetToken,
+	checkEmailAvailability,
 } = require("../controllers/customerController");
 
 // const customerAuthMiddleware = require('../middlewares/customerAuthMiddleware');
@@ -86,5 +87,8 @@ router.get("/wallet/test", authMiddleware, (req, res) => {
 
 // Lead creation route (no auth required)
 router.post('/lead', createLead);
+
+// Email validation route (no auth required)
+router.get("/check-email", checkEmailAvailability);
 
 module.exports = router;

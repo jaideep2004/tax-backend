@@ -33,12 +33,13 @@ const replyToMessage = async (req, res) => {
 			repliedBy,
 			content: replyContent,
 			files,
+			isRead: false, // Initially set to false, will be marked as read when customer views it
 			createdAt: new Date(),
 		};
 
 		message.replyContent.push(replyData);
 		message.isReplied = true;
-		message.isRead = true;
+		message.isRead = true; // Mark the original message as read by admin
 
 		await message.save();
 		res
@@ -178,6 +179,8 @@ const markMessageAsRead = async (req, res) => {
 	const { orderId, serviceId, userId } = req.body;
 
 	try {
+		console.log(`Marking messages as read: orderId=${orderId}, serviceId=${serviceId}, userId=${userId}`);
+		
 		let query = {};
 		if (orderId) {
 			query.orderId = orderId;
@@ -188,23 +191,37 @@ const markMessageAsRead = async (req, res) => {
 		
 		// Find all messages for this order/service
 		const messages = await Message.find(query);
+		console.log(`Found ${messages.length} messages to mark as read`);
 		
 		// Mark messages as read
 		for (let message of messages) {
+			let isModified = false;
+			
 			// If admin is viewing customer messages
 			if (message.sender !== userId) {
 				message.isRead = true;
+				isModified = true;
+				console.log(`Marked message ${message._id} as read`);
 			}
 			
 			// If customer is viewing admin replies
 			if (message.replyContent && message.replyContent.length > 0) {
-				message.replyContent = message.replyContent.map(reply => ({
-					...reply,
-					isRead: true
-				}));
+				// Process each reply
+				for (let i = 0; i < message.replyContent.length; i++) {
+					if (message.replyContent[i].repliedBy !== userId) {
+						// Only mark replies from others as read
+						message.replyContent[i].isRead = true;
+						isModified = true;
+						console.log(`Marked reply ${i} in message ${message._id} as read`);
+			}
+				}
 			}
 			
+			// Only save if modifications were made
+			if (isModified) {
 			await message.save();
+				console.log(`Saved changes to message ${message._id}`);
+			}
 		}
 
 		res.json({ 

@@ -12,6 +12,15 @@ if (!fs.existsSync(uploadDir)) {
 // Enhanced storage configuration
 const storage = multer.diskStorage({
 	destination: function (req, file, cb) {
+		// Create common uploads directory if user ID is not available
+		if (!req.user || !req.user.userId) {
+			const commonDir = path.join(uploadDir, 'common');
+			if (!fs.existsSync(commonDir)) {
+				fs.mkdirSync(commonDir, { recursive: true, mode: 0o755 });
+			}
+			return cb(null, commonDir);
+		}
+		
 		// Create user-specific directory
 		const userDir = path.join(uploadDir, req.user.userId.toString());
 		if (!fs.existsSync(userDir)) {

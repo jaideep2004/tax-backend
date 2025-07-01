@@ -14,6 +14,7 @@ const { handleReferral } = require("./walletController");
 const Wallet = require("../models/walletModel");
 const { CustomObjectId } = require("../utils/idGenerator");
 const { sendEmail } = require("../utils/emailUtils");
+const Lead = require("../models/leadModel");
 
 const hashPassword = (password, salt) => {
 	const hash = crypto.createHmac("sha256", salt);
@@ -199,12 +200,20 @@ const registerCustomer = async (req, res) => {
 			return res.status(400).json({ message: "All fields are required" });
 		}
 
-		// Check if a user with the same email or username already exists
+		// Check if a user with the same email already exists
 		const existingUser = await User.findOne({ email });
 		if (existingUser) {
 			return res
 				.status(400)
-				.json({ message: "User with this email already exists" });
+				.json({ message: "User with this email already exists. Please login to your account instead." });
+		}
+
+		// Check if a lead with the same email already exists
+		const existingLead = await Lead.findOne({ email });
+		if (existingLead) {
+			return res
+				.status(400)
+				.json({ message: "A lead with this email already exists. Our team will contact you about your inquiry soon." });
 		}
 
 		const salt = crypto.randomBytes(16).toString("hex");
@@ -307,6 +316,22 @@ const registerCustomer = async (req, res) => {
 const registerFlexiCustomer = async (req, res) => {
 	try {
 		const { name, email, mobile, password, leadSource } = req.body;
+
+		// Check if a user with the same email already exists
+		const existingUser = await User.findOne({ email });
+		if (existingUser) {
+			return res
+				.status(400)
+				.json({ message: "User with this email already exists. Please login to your account instead." });
+		}
+
+		// Check if a lead with the same email already exists
+		const existingLead = await Lead.findOne({ email });
+		if (existingLead) {
+			return res
+				.status(400)
+				.json({ message: "A lead with this email already exists. Our team will contact you about your inquiry soon." });
+		}
 
 		// Generate unique ID for the user
 		const userId = `CUST${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -743,7 +768,7 @@ const uploadDocuments = async (req, res) => {
 				return {
 					filename: file.filename,
 					originalName: file.originalname,
-					path: newPath,
+					path: `/${newPath.replace(/\\/g, '/')}`, // Format path for URL use
 					mimetype: file.mimetype,
 					size: file.size,
 					uploadedAt: uploadDate,
@@ -975,11 +1000,25 @@ const sendQuery = async (req, res) => {
 			return res.status(404).json({ message: "Service not found" });
 		}
 
+		// Fix file paths to use relative paths instead of absolute paths
 		const attachments = req.files
-			? req.files.map((file) => ({
-					filePath: file.path,
+			? req.files.map((file) => {
+					// Extract just the path relative to the backend
+					let relativePath = file.path;
+					// If it's an absolute path, extract just the filename and parent folder
+					if (relativePath.includes('C:') || relativePath.includes('/Users/') || relativePath.includes('\\')) {
+						const pathParts = relativePath.split(/[\/\\]/);
+						const fileName = pathParts.pop(); // Get filename
+						// Store as a relative path
+						relativePath = `/uploads/${fileName}`;
+					}
+					
+					return {
+						filePath: relativePath,
 					originalName: file.originalname,
-			  }))
+						mimetype: file.mimetype
+					};
+			  })
 			: [];
 
 		const newQuery = {
@@ -1542,29 +1581,73 @@ const resetPassword = async (req, res) => {
 	}
 };
 
+// Check if an email is available (not used in User or Lead collections)
+const checkEmailAvailability = async (req, res) => {
+	try {
+		const { email } = req.query;
+
+		if (!email) {
+			return res.status(400).json({
+				success: false,
+				message: "Email parameter is required"
+			});
+		}
+
+		// Check both User and Lead collections
+		const existingUser = await User.findOne({ email });
+		const existingLead = await Lead.findOne({ email });
+
+		if (existingUser) {
+			return res.status(200).json({
+				success: false,
+				available: false,
+				message: "This email is already associated with an account. Please login instead."
+			});
+		}
+
+		if (existingLead) {
+			return res.status(200).json({
+				success: false,
+				available: false,
+				message: "A lead with this email already exists. Our team will contact you soon."
+			});
+		}
+
+		return res.status(200).json({
+			success: true,
+			available: true,
+			message: "Email is available."
+		});
+
+	} catch (error) {
+		console.error("Error checking email availability:", error);
+		return res.status(500).json({
+			success: false,
+			message: "Server error while checking email availability."
+		});
+	}
+};
+
 module.exports = {
+	getCustomerDashboard,
+	getUserServices,
 	registerCustomer,
+	registerFlexiCustomer,
+	updateCustomerProfile,
+	handlePaymentSuccess,
+	uploadDocuments,
+	deleteUser,
 	loginUser,
 	initiatePayment,
 	getServiceById,
-	getUserServices,
-	getCustomerDashboard,
-	handlePaymentSuccess,
-	updateCustomerProfile,
-	deleteUser,
-	uploadDocuments,
 	sendQuery,
-
-	registerFlexiCustomer, 
-	processFlexiFunnelRedirect,
-
 	getCustomerQueriesWithReplies,
 	submitFeedback,
 	updateBankDetails,
-
+	processFlexiFunnelRedirect,
 	googleRegister,
-	// Export the password reset functions
 	forgotPassword,
 	resetPassword,
 	verifyResetToken,
+	checkEmailAvailability,
 };

@@ -256,12 +256,18 @@ const userSchema = new mongoose.Schema(
 		lastname: { type: String },
 		email: { type: String, required: true, unique: true },
 		username: { type: String },
-		passwordHash: { type: String, required: function() {
-			return !this.googleId; // Only required if no googleId is provided
-		}},
-		salt: { type: String, required: function() {
-			return !this.googleId; // Only required if no googleId is provided
-		}},
+		passwordHash: {
+			type: String,
+			required: function () {
+				return !this.googleId; // Only required if no googleId is provided
+			},
+		},
+		salt: {
+			type: String,
+			required: function () {
+				return !this.googleId; // Only required if no googleId is provided
+			},
+		},
 		// Password reset fields
 		resetPasswordToken: { type: String },
 		resetPasswordExpires: { type: Date },
@@ -290,7 +296,7 @@ const userSchema = new mongoose.Schema(
 		paymentHistory: [paymentHistorySchema],
 
 		// Referral fields
-		referralCode: { type: String, unique: true, default: null, sparse: true },
+		referralCode: { type: String, default: null },
 		referredUsers: [{ type: String, ref: "User" }],
 		referredBy: { type: String, ref: "User" },
 		downloadAccess: {

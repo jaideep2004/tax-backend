@@ -62,6 +62,7 @@ const messageSchema = new mongoose.Schema(
                 repliedBy: { type: String, ref: "User" },
                 content: { type: String },
                 files: [fileSchema],
+                isRead: { type: Boolean, default: false },
                 createdAt: { type: Date, default: Date.now },
             },
         ],

@@ -1,5 +1,6 @@
 const Lead = require("../models/leadModel");
 const Service = require("../models/serviceModel");
+const User = require("../models/userModel"); // Import User model
 const { sendEmail } = require("../utils/emailUtils"); // Assuming you have an email util
 
 // Create a new lead from the service inquiry form
@@ -21,6 +22,24 @@ const createLead = async (req, res) => {
             return res.status(404).json({ 
                 success: false, 
                 message: "Service not found" 
+            });
+        }
+
+        // Check if lead with the same email already exists
+        const existingLead = await Lead.findOne({ email });
+        if (existingLead) {
+            return res.status(400).json({
+                success: false,
+                message: "A lead with this email already exists. Our team will contact you soon."
+            });
+        }
+
+        // Check if user with the same email already exists
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({
+                success: false,
+                message: "An account with this email already exists. Please login to your account to request services."
             });
         }
 
@@ -106,7 +125,7 @@ const getEmployeeLeads = async (req, res) => {
         res.status(200).json({ 
             success: true, 
             leads 
-        });
+        });  
     } catch (error) {
         console.error("Error fetching employee leads:", error);
         res.status(500).json({ 
@@ -120,4 +139,4 @@ const getEmployeeLeads = async (req, res) => {
 module.exports = {
     createLead,
     getEmployeeLeads
-}; 
+};  

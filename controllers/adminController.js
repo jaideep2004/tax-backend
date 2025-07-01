@@ -1993,19 +1993,30 @@ const convertLeadToOrder = async (req, res) => {
 			});
 		}
 
+		// Check if a user with this email already exists
+		let existingUser = await User.findOne({ email: lead.email });
+		let newUser;
+		let tempPassword = null;
+
+		if (existingUser) {
+			// User exists, update the existing user
+			newUser = existingUser;
+			console.log(`User with email ${lead.email} already exists, updating existing user`);
+		} else {
+			// User does not exist, create a new user
 		// Generate a unique username if not provided
 		const username =
 			lead.email.split("@")[0] + Math.floor(Math.random() * 1000);
 
 		// Generate a temporary password
-		const tempPassword = Math.random().toString(36).slice(-8);
+			tempPassword = Math.random().toString(36).slice(-8);
 
 		// Create salt and hash password
 		const salt = crypto.randomBytes(16).toString("hex");
 		const hashedPassword = hashPassword(tempPassword, salt);
 
 		// Create new customer user
-		const newUser = new User({
+			newUser = new User({
 			name: lead.name,
 			email: lead.email,
 			mobile: lead.mobile,
@@ -2030,6 +2041,7 @@ const convertLeadToOrder = async (req, res) => {
 		});
 
 		await newWallet.save();
+		}
 
 		// Handle payment history - prioritize conversion payment over lead payment data to avoid duplication
 		// Only add one payment entry
@@ -2188,7 +2200,8 @@ const convertLeadToOrder = async (req, res) => {
 			: `- CGST (${gstRate / 2}%): ₹${cgst.toFixed(2)}
 - SGST (${gstRate / 2}%): ₹${sgst.toFixed(2)}`;
 
-		// Send welcome email to the customer
+		// Only send welcome email if this is a new user
+		if (tempPassword) {
 		await sendEmail(
 			lead.email,
 			"Welcome to FinShelter - Your Account and Order Details",
@@ -2218,6 +2231,31 @@ If you have any questions, please contact our support team.
 Best regards,
 FinShelter Team`
 		);
+		} else {
+			// Send an order confirmation email to existing user
+			await sendEmail(
+				lead.email,
+				"New Order Confirmation - FinShelter",
+				`Dear ${lead.name},
+
+Thank you for your new order with FinShelter.
+
+ORDER DETAILS:
+- Order ID: ${orderId}
+- Service: ${lead.serviceId.name}${packageInfo}
+${taxInfo}
+- Total Payment Amount: ₹${basePrice.toFixed(2)}
+- Payment Method: ${paymentDetails.method}
+- Due Date: ${dueDate.toLocaleDateString()}
+
+You can track your order status and communicate with our team through your dashboard.
+
+If you have any questions, please contact our support team.
+
+Best regards,
+FinShelter Team`
+			);
+		}
 
 		res.status(200).json({
 			message: "Lead converted to customer and order successfully",

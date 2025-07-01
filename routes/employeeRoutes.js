@@ -213,4 +213,29 @@ router.get("/profile", authMiddleware, async (req, res) => {
 	}
 });
 
+// Add route for employee to view documents
+router.get('/documents/:filename', (req, res) => {
+	try {
+		const filename = req.params.filename;
+		// Search in common upload paths
+		const possiblePaths = [
+			path.join(__dirname, '../uploads', filename),
+			// Add other possible paths where documents might be stored
+		];
+		
+		// Find the first path that exists
+		for (const filePath of possiblePaths) {
+			if (fs.existsSync(filePath)) {
+				return res.sendFile(filePath);
+			}
+		}
+		
+		// If file not found
+		res.status(404).send('Document not found');
+	} catch (error) {
+		console.error('Error serving document:', error);
+		res.status(500).send('Error serving document');
+	}
+});
+
 module.exports = router;
