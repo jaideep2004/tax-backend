@@ -511,6 +511,9 @@ const replyToQuery = async (req, res) => {
 				},
 				$set: {
 					"services.$.queries.$[query].status": "responded",
+					"services.$.queries.$[query].isReplied": true,
+					"services.$.queries.$[query].isRead": true,
+					"services.$.queries.$[query].lastRepliedAt": new Date()
 				},
 			},
 			{
@@ -522,7 +525,15 @@ const replyToQuery = async (req, res) => {
 
 		if (updatedCustomer.modifiedCount > 0) {
 			console.log("Reply added successfully for query ID:", queryId);
-			return res.json({ message: "Reply added successfully" });
+			return res.json({ 
+				success: true,
+				message: "Reply added successfully",
+				queryStatus: {
+					status: "responded",
+					isReplied: true,
+					isRead: true
+				}
+			});
 		} else {
 			console.error("Failed to add the reply for query ID:", queryId);
 			return res.status(500).json({ message: "Failed to add reply" });
@@ -1095,6 +1106,246 @@ const sendOrderForL1Review = async (req, res) => {
 	}
 };
 
+// Add password reset functions
+const forgotPassword = async (req, res) => {
+	try {
+		const { email } = req.body;
+
+		if (!email) {
+			return res.status(400).json({
+				success: false,
+				message: "Email is required",
+			});
+		}
+
+		// Find the employee by email
+		const employee = await User.findOne({ email: email, role: "employee" });
+		if (!employee) {
+			return res.status(404).json({
+				success: false,
+				message: "Employee with this email does not exist",
+			});
+		}
+
+		// Generate a random reset token
+		const resetToken = crypto.randomBytes(32).toString("hex");
+
+		// Set token expiration (1 hour from now)
+		const resetTokenExpiry = Date.now() + 3600000; // 1 hour in milliseconds
+
+		// Update employee with reset token and expiry
+		employee.resetPasswordToken = resetToken;
+		employee.resetPasswordExpires = resetTokenExpiry;
+		await employee.save();
+
+		// Create reset URL (hardcoded frontend URL)
+		// const resetUrl = `https://thefinshelter.com/employees/reset-password/${resetToken}`;
+
+		const resetUrl = `http://localhost:5173/employees/reset-password/${resetToken}`;
+
+		// Email content
+		const subject = "Password Reset Request";
+		const text = `You are receiving this email because you (or someone else) requested a password reset for your employee account.\n\n
+            Please click the link below to reset your password:\n\n
+            ${resetUrl}\n\n
+            This link is valid for 1 hour only.\n\n
+            If you did not request this, please ignore this email and your password will remain unchanged.`;
+
+		// HTML Email template
+		const htmlContent = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Password Reset Request</title>
+            <style>
+                body {
+                    font-family: 'Poppins', Arial, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 600px;
+                    margin: 0 auto;
+                }
+                .container {
+                    background-color: #f7f7f7;
+                    padding: 20px;
+                    border-radius: 5px;
+                }
+                .header {
+                    background-color: #1b321d;
+                    color: white;
+                    padding: 15px;
+                    text-align: center;
+                    border-radius: 5px 5px 0 0;
+                }
+                .content {
+                    background-color: white;
+                    padding: 20px;
+                    border-radius: 0 0 5px 5px;
+                }
+                .button {
+                    display: inline-block;
+                    background-color: #1b321d;
+                    color: white;
+                    text-decoration: none;
+                    padding: 10px 20px;
+                    margin: 20px 0;
+                    border-radius: 5px;
+                    font-weight: bold;
+                }
+                .footer {
+                    text-align: center;
+                    font-size: 0.8em;
+                    margin-top: 20px;
+                    color: #666;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>Password Reset Request</h1>
+                </div>
+                <div class="content">
+                    <p>Hello ${employee.name},</p>
+                    <p>You are receiving this email because you (or someone else) requested a password reset for your employee account.</p>
+                    <p>Please click the button below to reset your password:</p>
+                    <a href="${resetUrl}" class="button">Reset Password</a>
+                    <p>This link is valid for 1 hour only.</p>
+                    <p>If you did not request this, please ignore this email and your password will remain unchanged.</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; ${new Date().getFullYear()} TaxHarbor. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+
+		// Send password reset email
+		await sendEmail(employee.email, subject, text, htmlContent);
+
+		res.status(200).json({
+			success: true,
+			message: "Password reset link sent to your email",
+		});
+	} catch (error) {
+		console.error("Error in forgot password:", error);
+		res.status(500).json({
+			success: false,
+			message: "An error occurred while processing your request",
+			error: error.message,
+		});
+	}
+};
+
+/**
+ * Verify if a reset token is valid and not expired
+ */
+const verifyResetToken = async (req, res) => {
+	try {
+		const { token } = req.params;
+
+		if (!token) {
+			console.log('No token provided in request');
+			return res.status(400).json({
+				success: false,
+				message: "No token provided",
+			});
+		}
+
+		console.log('Verifying token:', token);
+
+		// Find employee with this token and check if it's expired
+		const employee = await User.findOne({
+			resetPasswordToken: token,
+			resetPasswordExpires: { $gt: Date.now() },
+			role: "employee",
+		});
+
+		if (!employee) {
+			console.log('No employee found with this token or token expired');
+			return res.status(400).json({
+				success: false,
+				message: "Password reset token is invalid or has expired",
+			});
+		}
+
+		console.log('Token is valid for employee:', employee.email);
+
+		// Token is valid
+		res.status(200).json({
+			success: true,
+			message: "Token is valid",
+			employeeId: employee._id,
+		});
+	} catch (error) {
+		console.error("Error verifying reset token:", error);
+		res.status(500).json({
+			success: false,
+			message: "An error occurred while verifying the token",
+			error: error.message,
+		});
+	}
+};
+ 
+/**
+ * Reset employee's password using the token
+ */
+const resetPassword = async (req, res) => {
+	try {
+		const { token, password } = req.body;
+
+		if (!token || !password) {
+			return res.status(400).json({
+				success: false,
+				message: "Token and password are required",
+			});
+		}
+
+		// Find employee with this token and check if it's expired
+		const employee = await User.findOne({
+			resetPasswordToken: token,
+			resetPasswordExpires: { $gt: Date.now() },
+			role: "employee",
+		});
+
+		if (!employee) {
+			return res.status(400).json({
+				success: false,
+				message: "Password reset token is invalid or has expired",
+			});
+		}
+
+		// Generate new salt and hash the new password
+		const salt = crypto.randomBytes(16).toString("hex");
+		const hash = hashPassword(password, salt);
+
+		// Update employee's password
+		employee.passwordHash = hash;
+		employee.salt = salt;
+		
+		// Clear reset token fields
+		employee.resetPasswordToken = undefined;
+		employee.resetPasswordExpires = undefined;
+		
+		await employee.save();
+
+		res.status(200).json({
+			success: true,
+			message: "Password has been reset successfully. You can now log in with your new password.",
+		});
+	} catch (error) {
+		console.error("Error resetting password:", error);
+		res.status(500).json({
+			success: false,
+			message: "An error occurred while resetting your password",
+			error: error.message,
+		});
+	}
+};
+
 module.exports = {
 	updateServiceStatus,
 	getAssignedCustomers,
@@ -1109,4 +1360,7 @@ module.exports = {
 	uploadLeadDocuments,
 	updateServiceDelayReason,
 	sendOrderForL1Review,
+	forgotPassword,
+	verifyResetToken,
+	resetPassword,
 };

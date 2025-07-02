@@ -73,11 +73,10 @@ app.get('/files/:filename', (req, res) => {
 const PORT = process.env.PORT || 8000;
 
 app.get("/", (req, res) => {
-	res.send("FINSHELTER backend 1 JULY!!");
+	res.send("FINSHELTER backend 2 july!!");
 });
 
 
-//local
 // app.listen(PORT, () => {
 // 	console.log(`Server running on port ${PORT}`);
 // });

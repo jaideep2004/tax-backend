@@ -22,6 +22,10 @@ const {
 	uploadLeadDocuments,
 	updateServiceDelayReason,
 	sendOrderForL1Review,
+
+	forgotPassword,
+	verifyResetToken,
+	resetPassword,
 } = require("../controllers/employeeController");
 
 // Configure multer for file uploads
@@ -33,7 +37,7 @@ const storage = multer.diskStorage({
 		cb(null, Date.now() + '-' + file.originalname);
 	}
 });
-
+ 
 const upload = multer({ 
 	storage, 
 	limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
@@ -237,5 +241,11 @@ router.get('/documents/:filename', (req, res) => {
 		res.status(500).send('Error serving document');
 	}
 });
+
+// Add these routes to your employeeRoutes.js file
+router.post("/forgot-password", forgotPassword);
+router.get("/verify-reset-token/:token", verifyResetToken);
+router.post("/reset-password", resetPassword);
+
 
 module.exports = router;
