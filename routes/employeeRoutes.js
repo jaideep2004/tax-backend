@@ -110,6 +110,8 @@ router.get("/pending-l1-reviews", authMiddleware, async (req, res) => {
 	}
 });
 
+const sendZeptoMail = require("../utils/sendZeptoMail");
+
 router.post("/complete-l1-review", authMiddleware, async (req, res) => {
 	try {
 		const { orderId, decision, customerId, serviceId } = req.body;
@@ -162,13 +164,23 @@ router.post("/complete-l1-review", authMiddleware, async (req, res) => {
 		// Send notification to the original employee
 		if (employee.email) {
 			try {
-				await sendEmail(
-					employee.email,
-					`Order Review ${decision === 'approved' ? 'Approved' : 'Needs Revision'}`,
-					`Hello ${employee.name},\n\nThe order #${orderId} has been ${decision === 'approved' ? 'approved' : 'sent back for revision'} by your L1.${
-						decision === 'approved' ? '' : '\n\nPlease check the order and make necessary revisions.'
-					}`
-				);
+				await sendZeptoMail({
+					to: employee.email,
+					subject: `Order Review ${decision === 'approved' ? 'Approved' : 'Needs Revision'}`,
+					html: `
+						<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+							<div style="background: ${decision === 'approved' ? '#e8f5e9' : '#fffde7'}; padding: 20px; border-radius: 5px 5px 0 0; border-left: 4px solid ${decision === 'approved' ? '#43a047' : '#ffb300'};">
+								<h2 style="color: ${decision === 'approved' ? '#388e3c' : '#fbc02d'}; margin: 0;">Order #${orderId} ${decision === 'approved' ? 'Approved' : 'Needs Revision'}</h2>
+							</div>
+							<div style="padding: 20px; background: #f8f9fa;">
+								<p>Hello ${employee.name},</p>
+								<p>The order <strong>#${orderId}</strong> has been <strong>${decision === 'approved' ? 'approved' : 'sent back for revision'}</strong> by your L1 reviewer.</p>
+								${decision === 'approved' ? '' : '<p style="color:#f57c00;">Please check the order and make necessary revisions.</p>'}
+								<p style="margin-top: 30px; color: #888;">Best regards,<br>Finshelter Team</p>
+							</div>
+						</div>
+					`
+				});
 			} catch (emailError) {
 				console.error("Error sending notification email:", emailError);
 				// Continue execution even if email fails

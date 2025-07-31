@@ -73,7 +73,7 @@ app.get('/files/:filename', (req, res) => {
 const PORT = process.env.PORT || 8000;
 
 app.get("/", (req, res) => {
-	res.send("FINSHELTER backend 2 july!!");
+	res.send("FINSHELTER backend 31 july!!");
 });
 
 
@@ -91,3 +91,4 @@ const options = {
 https.createServer(options, app).listen(PORT, () => {
 	console.log(`Server running on port ${PORT} (HTTPS)`);
 });
+ 

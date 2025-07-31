@@ -53,6 +53,15 @@ const customerServiceSchema = new mongoose.Schema({
 			feedback: String,
 			rating: Number,
 			createdAt: { type: Date, default: Date.now },
+			// Add new feedback fields
+			satisfaction: String,
+			recommendation: String,
+			professionalismRating: Number,
+			clarityUnderstanding: String,
+			likeMost: String,
+			improvements: String,
+			teamMemberAppreciation: String,
+			shareTestimonial: String
 		},
 	],
 	// Payment and pricing fields

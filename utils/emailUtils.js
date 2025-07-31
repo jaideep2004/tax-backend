@@ -68,7 +68,7 @@ const sendEmail = async (to, subject, text, htmlContent = null) => {
                     <p>${text.replace(/\n/g, "<br>")}</p>
                 </div>
                 <div class="email-footer">
-                    <p>© ${new Date().getFullYear()} TaxHarbor. All rights reserved.</p>
+                    <p>© ${new Date().getFullYear()} Finshelter. All rights reserved.</p>
                 </div>
             </div>
         </body>

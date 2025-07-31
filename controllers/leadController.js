@@ -1,7 +1,7 @@
 const Lead = require("../models/leadModel");
 const Service = require("../models/serviceModel");
 const User = require("../models/userModel"); // Import User model
-const { sendEmail } = require("../utils/emailUtils"); // Assuming you have an email util
+const sendZeptoMail = require("../utils/sendZeptoMail");
 
 // Create a new lead from the service inquiry form
 const createLead = async (req, res) => {
@@ -34,13 +34,15 @@ const createLead = async (req, res) => {
             });
         }
 
-        // Check if user with the same email already exists
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            return res.status(400).json({
-                success: false,
-                message: "An account with this email already exists. Please login to your account to request services."
-            });
+        // Only block duplicate-user leads for guests (no req.user)
+        if (!req.user) {
+            const existingUser = await User.findOne({ email });
+            if (existingUser) {
+                return res.status(400).json({
+                    success: false,
+                    message: "An account with this email already exists. Please login to your account to request services."
+                });
+            }
         }
 
         // Create new lead
@@ -58,19 +60,19 @@ const createLead = async (req, res) => {
 
         // Send email notification to admin
         try {
-            await sendEmail(
-                process.env.ADMIN_EMAIL,
-                "New Service Inquiry Lead",
-                `A new lead has been received:
-                
-                Name: ${name}
-                Email: ${email}
-                Mobile: ${mobile}
-                Service: ${service.name}
-                Message: ${message || "N/A"}
-                
-                Please check the admin dashboard to process this lead.`
-            );
+            await sendZeptoMail({
+                to: process.env.ADMIN_EMAIL,
+                subject: "New Service Inquiry Lead",
+                html: `
+                    <h2>New Service Inquiry Lead</h2>
+                    <p><strong>Name:</strong> ${name}</p>
+                    <p><strong>Email:</strong> ${email}</p>
+                    <p><strong>Mobile:</strong> ${mobile}</p>
+                    <p><strong>Service:</strong> ${service.name}</p>
+                    <p><strong>Message:</strong> ${message || "N/A"}</p>
+                    <p>Please check the admin dashboard to process this lead.</p>
+                `
+            });
         } catch (emailError) {
             console.error("Error sending email notification:", emailError);
             // Continue with the process even if email fails
@@ -78,20 +80,18 @@ const createLead = async (req, res) => {
 
         // Send acknowledgment email to the customer
         try {
-            await sendEmail(
-                email,
-                "Thank You for Your Inquiry - FinShelter",
-                `Dear ${name},
-                
-                Thank you for your interest in our ${service.name} service.
-                
-                We have received your inquiry and our team will contact you shortly to discuss further details.
-                
-                If you have any immediate questions, please feel free to contact us.
-                
-                Best regards,
-                FinShelter Team`
-            );
+            await sendZeptoMail({
+                to: email,
+                subject: "Thank You for Your Inquiry - FinShelter",
+                html: `
+                    <h2>Thank You for Your Interest!</h2>
+                    <p>Dear ${name},</p>
+                    <p>Thank you for your interest in our ${service.name} service.</p>
+                    <p>We have received your inquiry and our team will contact you shortly to discuss further details.</p>
+                    <p>If you have any immediate questions, please feel free to contact us.</p>
+                    <p>Best regards,<br>The FinShelter Team</p>
+                `
+            });
         } catch (emailError) {
             console.error("Error sending acknowledgment email:", emailError);
             // Continue with the process even if email fails

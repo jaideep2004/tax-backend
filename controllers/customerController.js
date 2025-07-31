@@ -4,7 +4,6 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/userModel");
 const Service = require("../models/serviceModel");
 const Razorpay = require("razorpay");
-const nodemailer = require("nodemailer");
 const fs = require("fs");
 const path = require("path");
 const {
@@ -13,22 +12,14 @@ const {
 const { handleReferral } = require("./walletController");
 const Wallet = require("../models/walletModel");
 const { CustomObjectId } = require("../utils/idGenerator");
-const { sendEmail } = require("../utils/emailUtils");
 const Lead = require("../models/leadModel");
+const sendZeptoMail = require("../utils/sendZeptoMail");
 
 const hashPassword = (password, salt) => {
 	const hash = crypto.createHmac("sha256", salt);
 	hash.update(password);
 	return hash.digest("hex");
 };
-
-const transporter = nodemailer.createTransport({
-	service: "gmail",
-	auth: {
-		user: process.env.EMAIL_USER,
-		pass: process.env.EMAIL_PASS,
-	},
-});
 
 const getCustomerDashboard = async (req, res) => {
 	try {
@@ -287,15 +278,22 @@ const registerCustomer = async (req, res) => {
 		}
 
 		// Send welcome email
-		await sendEmail(
-			email,
-			"Welcome to Our Service",
-			`Hello ${name},\nThank you for registering with us! Your referral code is: ${newReferralCode}${
-				assignmentResult.success
-					? `\n\nAn employee has been assigned to assist you with your service: ${assignmentResult.employee.name}`
-					: ""
-			}`
-		);
+		await sendZeptoMail({
+			to: email,
+			subject: "Welcome to Our Service",
+			html: `
+				<h2>Welcome to Our Service!</h2>
+				<p>Hello ${name},</p>
+				<p>Thank you for registering with us! Your referral code is: <strong>${newReferralCode}</strong></p>
+				${
+					assignmentResult.success
+					? `<p>An employee has been assigned to assist you with your service: <strong>${assignmentResult.employee.name}</strong></p>`
+					: ''
+				}
+				<p>We're excited to have you on board!</p>
+				<p>Best regards,<br>The Team</p>
+			`
+		});
 
 		res.status(200).json({
 			message: "Registration successful!",
@@ -372,11 +370,26 @@ const registerFlexiCustomer = async (req, res) => {
 		await newWallet.save();
 
 		// Send welcome email
-		await sendEmail(
-			email,
-			"Welcome to Our Service",
-			`Dear ${name},\n\nThank you for registering. Your account has been created successfully. Your referral code is: ${newReferralCode}. Our team will review and assign your service within 24 hours.\n\nBest regards,\nTeam`
-		);
+		try {
+			await sendZeptoMail({
+				to: email,
+				subject: "Welcome to Our Service",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">Welcome to Our Service!</h2>
+						<p>Dear ${name},</p>
+						<p>Thank you for registering. Your account has been created successfully.</p>
+						<p>Your referral code is: <strong>${newReferralCode}</strong></p>
+						<p>Our team will review and assign your service within 24 hours.</p>
+						<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+							<p>Best regards,<br>Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending welcome email:", emailError);
+		}
 
 		res.status(201).json({
 			message: "Registration successful",
@@ -665,22 +678,49 @@ SGST (${gstRate / 2}%): ₹${sgst.toFixed(2)}`
 }
 Total amount: ₹${amountInRupees.toFixed(2)}`;
 		
-		if (!assignmentResult.success) {
-			await sendEmail(
-				user.email,
-				"Service Purchase Successful",
-				`${emailContent} An employee will be assigned to you shortly.
+		// Format tax details as HTML
+		const taxDetailsHtml = `
+			<div style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+				<h3 style="margin-top: 0; color: #2c3e50;">Payment Details</h3>
+				<p><strong>Base amount:</strong> ₹${taxableAmount.toFixed(2)}</p>
+				${
+					isInterstate
+					? `<p><strong>IGST (${gstRate}%):</strong> ₹${igst.toFixed(2)}</p>`
+					: `
+						<p><strong>CGST (${gstRate / 2}%):</strong> ₹${cgst.toFixed(2)}</p>
+						<p><strong>SGST (${gstRate / 2}%):</strong> ₹${sgst.toFixed(2)}</p>
+					`
+				}
+				<p style="font-weight: bold; font-size: 1.1em; margin-top: 10px;">
+					Total amount: ₹${amountInRupees.toFixed(2)}
+				</p>
+			</div>
+		`;
 
-${taxDetails}`
-			);
-		} else {
-			await sendEmail(
-				user.email,
-				"Service Purchase Successful",
-				`${emailContent} ${assignmentResult.employee.name} has been assigned to assist you with your service.
-
-${taxDetails}`
-			);
+		try {
+			// Send email with ZeptoMail
+			await sendZeptoMail({
+				to: user.email,
+				subject: "Service Purchase Successful",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">Thank You for Your Purchase!</h2>
+						<p>${emailContent}</p>
+						${
+							!assignmentResult.success
+							? "<p>An employee will be assigned to assist you shortly.</p>"
+							: `<p><strong>${assignmentResult.employee.name}</strong> has been assigned to assist you with your service.</p>`
+						}
+						${taxDetailsHtml}
+						<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+							<p>If you have any questions, please don't hesitate to contact our support team.</p>
+							<p>Best regards,<br>The Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending purchase confirmation email:", emailError);
 		}
 
 		res.status(200).json({
@@ -931,11 +971,18 @@ const initiatePayment = async (req, res) => {
 		}
 
 		// Create order with the calculated amount or the provided amount
-		const orderAmount = gstInfo.totalAmount ? gstInfo.totalAmount : amount;
+		let orderAmount = gstInfo.totalAmount ? gstInfo.totalAmount : amount;
+		
+		// Ensure amount is a valid number and convert to integer paise
+		orderAmount = Math.round(parseFloat(orderAmount) * 100);
+		
+		if (isNaN(orderAmount) || orderAmount <= 0) {
+			return res.status(400).json({ message: "Invalid amount provided" });
+		}
 		
 		// Create order
 		const order = await razorpayInstance.orders.create({
-			amount: orderAmount * 100, // Razorpay expects amount in paise
+			amount: orderAmount, // Now in paise as integer
 			currency: currency || "INR",
 			payment_capture: 1,
 			notes: {
@@ -1111,15 +1158,29 @@ const submitFeedback = async (req, res) => {
 			return res.status(404).json({ message: "Service not found" });
 		}
 
-		// Add the feedback to the service
+		// Create feedback entry with explicit field assignments instead of using spread operator
 		const feedbackEntry = {
-			feedback,
+			feedback: typeof feedback === 'string' ? feedback : (feedback.generalFeedback || ''),
 			rating: parseInt(rating),
-			createdAt: new Date(),
+			createdAt: new Date()
 		};
 
-		user.services[serviceIndex].feedback.push(feedbackEntry);
+		// Explicitly add each field if it exists in the feedback object
+		if (typeof feedback === 'object') {
+			if (feedback.satisfaction) feedbackEntry.satisfaction = feedback.satisfaction;
+			if (feedback.recommendation) feedbackEntry.recommendation = feedback.recommendation;
+			if (feedback.professionalismRating) feedbackEntry.professionalismRating = parseInt(feedback.professionalismRating);
+			if (feedback.clarityUnderstanding) feedbackEntry.clarityUnderstanding = feedback.clarityUnderstanding;
+			if (feedback.likeMost) feedbackEntry.likeMost = feedback.likeMost;
+			if (feedback.improvements) feedbackEntry.improvements = feedback.improvements;
+			if (feedback.teamMemberAppreciation) feedbackEntry.teamMemberAppreciation = feedback.teamMemberAppreciation;
+			if (feedback.shareTestimonial) feedbackEntry.shareTestimonial = feedback.shareTestimonial;
+		}
 
+		// Log the feedback entry for debugging
+		console.log("Saving feedback entry:", JSON.stringify(feedbackEntry, null, 2));
+
+		user.services[serviceIndex].feedback.push(feedbackEntry);
 		await user.save();
 
 		res.status(201).json({
@@ -1217,15 +1278,36 @@ const processFlexiFunnelRedirect = async (req, res) => {
 		);
 
 		// Send notification email to admin
-		await sendEmail(
-			process.env.EMAIL_USER,
-			"FlexiFunnel Customer Redirect",
-			`A FlexiFunnel customer is ready for service assignment:\n\n` +
-				`Name: ${flexiCustomer.name}\n` +
-				`Email: ${flexiCustomer.email}\n` +
-				`Service Interest: ${flexiCustomer.additionalDetails.serviceInterest}\n` +
-				`Matched Service: ${service.name}`
-		);
+		try {
+			await sendZeptoMail({
+				to: process.env.ADMIN_EMAIL || process.env.EMAIL_USER,
+				subject: "FlexiFunnel Customer Ready for Assignment",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">New FlexiFunnel Customer</h2>
+						<p>A new FlexiFunnel customer is ready for service assignment:</p>
+						
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;">
+							<p><strong>Customer Details:</strong></p>
+							<ul style="list-style: none; padding: 0; margin: 10px 0;">
+								<li><strong>Name:</strong> ${flexiCustomer.name}</li>
+								<li><strong>Email:</strong> ${flexiCustomer.email}</li>
+								<li><strong>Service Interest:</strong> ${flexiCustomer.additionalDetails?.serviceInterest || 'Not specified'}</li>
+								<li><strong>Matched Service:</strong> ${service.name}</li>
+							</ul>
+						</div>
+
+						<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+							<p>Please log in to the admin dashboard to assign an employee to this customer.</p>
+							<p>Best regards,<br>Finshelter Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending FlexiFunnel notification email:", emailError);
+			// Continue with the process even if email fails
+		}
 
 		res.status(200).json({
 			userId: flexiCustomer._id,
@@ -1322,11 +1404,21 @@ const googleRegister = async (req, res) => {
 
 		// Send welcome email to the user
 		try {
-			await sendEmail(
-				email,
-				"Welcome to Tax-Buddy!",
-				`Welcome to Tax-Buddy, ${name}!\n\nThank you for registering with us using Google Sign-In.\nYou can now access all our services and manage your account.\nIf you have any questions, feel free to contact our support team.\n\nBest Regards,\nThe Tax-Buddy Team`
-			);
+			await sendZeptoMail({
+				to: createdUser.email,
+				subject: "Welcome to Finshelter!",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">Welcome to Finshelter!</h2>
+						<p>Hello ${createdUser.name},</p>
+						<p>Thank you for registering with us using Google Sign-In.</p>
+						<p>You can now access all our services and manage your account.</p>
+						<p>If you have any questions, feel free to contact our support team.</p>
+						<p>Best Regards,</p>
+						<p>The Finshelter Team</p>
+					</div>
+				`,
+			});
 		} catch (emailError) {
 			console.error("Error sending welcome email:", emailError);
 			// Continue registration process even if email fails
@@ -1460,7 +1552,7 @@ const forgotPassword = async (req, res) => {
                     <p>If you did not request this, please ignore this email and your password will remain unchanged.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; ${new Date().getFullYear()} TaxHarbor. All rights reserved.</p>
+                    <p>&copy; ${new Date().getFullYear()} Finshelter. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -1468,7 +1560,15 @@ const forgotPassword = async (req, res) => {
         `;
 
 		// Send password reset email
-		await sendEmail(user.email, subject, text, htmlContent);
+		try {
+			await sendZeptoMail({
+				to: user.email,
+				subject: subject,
+				html: htmlContent || text.replace(/\n/g, '<br>') // Convert plain text to HTML if no HTML content provided
+			});
+		} catch (emailError) {
+			console.error("Error sending email:", emailError);
+		}
 
 		res.status(200).json({
 			success: true,
@@ -1563,9 +1663,29 @@ const resetPassword = async (req, res) => {
 
 		// Send confirmation email
 		const subject = "Your Password Has Been Changed";
-		const text = `Hello ${user.name},\n\nThis is a confirmation that the password for your account with email ${user.email} has just been changed.\n\nIf you did not make this change, please contact our support team immediately.`;
+		const html = `
+			<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+				<div style="background: #e3f2fd; padding: 20px; border-radius: 5px 5px 0 0; border-left: 4px solid #2196f3;">
+					<h2 style="color: #1565c0; margin: 0;">Password Changed Successfully</h2>
+				</div>
+				<div style="padding: 20px; background: #f8f9fa;">
+					<p>Hello ${user.name},</p>
+					<p>This is a confirmation that the password for your account with email <strong>${user.email}</strong> has just been changed.</p>
+					<p>If you did not make this change, please contact our support team immediately.</p>
+					<p style="margin-top: 30px; color: #888;">Best regards,<br>Finshelter Team</p>
+				</div>
+			</div>
+		`;
 
-		await sendEmail(user.email, subject, text);
+		try {
+			await sendZeptoMail({
+				to: user.email,
+				subject,
+				html
+			});
+		} catch (emailError) {
+			console.error("Error sending email:", emailError);
+		}
 
 		res.status(200).json({
 			success: true,

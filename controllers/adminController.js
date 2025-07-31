@@ -1,7 +1,6 @@
 require("dotenv").config();
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
 const Razorpay = require("razorpay");
 const Wallet = require("../models/walletModel");
 const User = require("../models/userModel");
@@ -11,7 +10,7 @@ const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
 const path = require("path");
 const Lead = require("../models/leadModel");
-
+const sendZeptoMail = require("../utils/sendZeptoMail");
 const {
 	handleCustomerEmployeeAssignment,
 	assignUnassignedCustomers,
@@ -21,94 +20,6 @@ const hashPassword = (password, salt) => {
 	const hash = crypto.createHmac("sha256", salt);
 	hash.update(password);
 	return hash.digest("hex");
-};
-
-// Email transport configuration
-const transporter = nodemailer.createTransport({
-	service: "gmail", // Use your email service provider
-	auth: {
-		user: process.env.EMAIL_USER, // Your email address
-		pass: process.env.EMAIL_PASS, // Your email app-specific password
-	},
-});
-
-// Function to send emails with HTML template
-const sendEmail = async (to, subject, text, htmlContent = null) => {
-	try {
-		// Default HTML template if no custom HTML is provided
-		const defaultHtmlContent = `
-		<!DOCTYPE html>
-		<html lang="en">
-		<head>
-			<meta charset="UTF-8">
-			<meta name="viewport" content="width=device-width, initial-scale=1.0">
-			<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
-			<style>
-				body {
-					font-family: 'Poppins', sans-serif;
-					line-height: 1.6;
-					color: #333;
-					max-width: 600px;
-					margin: 0 auto;
-					padding: 20px;
-					background-color: white;
-				}
-				.email-container {
-					background-color: #95b8a2;
-					border-radius: 10px;
-					padding: 30px;
-					box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-				}
-				.email-header {
-					background-color: #1b321d;
-					color: white;
-					text-align: center;
-					padding: 15px;
-					border-top-left-radius: 10px;
-					border-top-right-radius: 10px;
-				}
-				.email-body {
-					background-color: white;
-					padding: 20px;
-					border-bottom-left-radius: 10px;
-					border-bottom-right-radius: 10px;
-				}
-				.email-footer {
-					text-align: center;
-					margin-top: 20px;
-					color: #1b321d;
-					font-size: 0.8em;
-				}
-			</style>
-		</head>
-		<body>
-			<div class="email-container">
-				<div class="email-header">
-					<h1>${subject}</h1>
-				</div>
-				<div class="email-body">
-					<p>${text.replace(/\n/g, "<br>")}</p>
-				</div>
-				<div class="email-footer">
-					<p>© ${new Date().getFullYear()} FinShelter. All rights reserved.</p>
-				</div>
-			</div>
-		</body>
-		</html>
-		`;
-
-		// Send email with either custom or default HTML template
-		await transporter.sendMail({
-			from: process.env.EMAIL_USER,
-			to,
-			subject,
-			text, // Plain text version
-			html: htmlContent || defaultHtmlContent, // Use custom HTML or default template
-		});
-		console.log(`Email sent to ${to}`);
-	} catch (error) {
-		console.error(`Failed to send email to ${to}:`, error);
-	}
 };
 
 // Admin login
@@ -534,6 +445,13 @@ const getAllCustomerOrders = async (req, res) => {
 					Feedback: {
 						$ifNull: [{ $arrayElemAt: ["$services.feedback.feedback", 0] }, ""],
 					},
+					"Feedback Raw": {
+						$cond: {
+							if: { $gt: [{ $size: { $ifNull: ["$services.feedback", []] } }, 0] },
+							then: { $arrayElemAt: ["$services.feedback", 0] },
+							else: null
+						}
+					},
 					Rating: {
 						$ifNull: [{ $arrayElemAt: ["$services.feedback.rating", 0] }, 0],
 					},
@@ -771,17 +689,49 @@ const assignOrderToEmployee = async (req, res) => {
 		await employee.save();
 
 		// Send email notifications
-		await sendEmail(
-			customer.email,
-			"Employee Assigned to Your Order",
-			`Hello ${customer.name},\n\nWe've assigned ${employee.name} to handle your order #${orderId}. They will contact you shortly.`
-		);
+		try {
+			// Email to customer
+			await sendZeptoMail({
+				to: customer.email,
+				subject: "Employee Assigned to Your Order",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">Your Order Update</h2>
+						<p>Hello ${customer.name},</p>
+						<p>We've assigned <strong>${employee.name}</strong> to handle your order <strong>#${orderId}</strong>.</p>
+						<p>${employee.name} will contact you shortly to discuss the next steps.</p>
+						<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+							<p>Best regards,<br>Customer Support Team</p>
+						</div>
+					</div>
+				`
+			});
 
-		await sendEmail(
-			employee.email,
-			"New Order Assignment",
-			`Hello ${employee.name},\n\nYou've been assigned to handle order #${orderId} for customer ${customer.name} (${customer.email}).`
-		);
+			// Email to employee
+			await sendZeptoMail({
+				to: employee.email,
+				subject: "New Order Assignment",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">New Order Assigned</h2>
+						<p>Hello ${employee.name},</p>
+						<p>You've been assigned to handle order <strong>#${orderId}</strong> for:</p>
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;">
+							<p><strong>Customer:</strong> ${customer.name}</p>
+							<p><strong>Email:</strong> ${customer.email}</p>
+							${customer.phone ? `<p><strong>Phone:</strong> ${customer.phone}</p>` : ''}
+						</div>
+						<p>Please contact the customer at your earliest convenience.</p>
+						<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+							<p>Best regards,<br>Admin Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending assignment emails:", emailError);
+			// Continue with the process even if email fails
+		}
 
 		res.status(200).json({
 			success: true,
@@ -1176,11 +1126,19 @@ const createEmployee = async (req, res) => {
 			allAssignments = [...allAssignments, ...assignments];
 		}
 
-		await sendEmail(
-			email,
-			"Welcome to the Team",
-			`Hello ${name},\n\nYour account has been created as an employee. Please log in with your credentials.\n\nUsername: ${username}\nPassword: ${password}`
-		);
+		await sendZeptoMail({
+			to: email,
+			subject: "Welcome to the Team",
+			html: `
+				<h2>Welcome to the Team!</h2>
+				<p>Hello ${name},</p>
+				<p>Your account has been created as an employee. Here are your login credentials:</p>
+				<p><strong>Username:</strong> ${username}<br>
+				<strong>Password:</strong> ${password}</p>
+				<p>Please log in and change your password after your first login for security.</p>
+				<p>Best regards,<br>Admin Team</p>
+			`
+		});
 
 		res.status(201).json({
 			employee: newEmployee,
@@ -1301,11 +1259,35 @@ const createManager = async (req, res) => {
 		await newManager.save();
 
 		// Send welcome email
-		await sendEmail(
-			email,
-			"Welcome to the Team",
-			`Hello ${name},\n\nYour account has been created as a manager. Please log in with your credentials.\n\nUsername: ${username}\nPassword: ${password}`
-		);
+		try {
+			await sendZeptoMail({
+				to: email,
+				subject: "Welcome to the Team",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">Welcome to the Team!</h2>
+						<p>Hello ${name},</p>
+						<p>Your manager account has been successfully created. Here are your login credentials:</p>
+						
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;">
+							<p><strong>Login URL:</strong> <a href="${process.env.FRONTEND_URL || 'https://your-app-url.com'}/login">Click here to login</a></p>
+							<p><strong>Username:</strong> ${username}</p>
+							<p><strong>Password:</strong> ${password}</p>
+						</div>
+
+						<p style="color: #dc3545; font-weight: bold;">For security reasons, please change your password after your first login.</p>
+						
+						<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+							<p>If you have any questions, please contact the admin.</p>
+							<p>Best regards,<br>Admin Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending welcome email:", emailError);
+			// Continue with the response even if email fails
+		}
 
 		res.status(201).json({ manager: newManager });
 	} catch (err) {
@@ -1342,17 +1324,60 @@ const assignEmployeeToManager = async (req, res) => {
 		}
 
 		// Send notification emails
-		await sendEmail(
-			manager.email,
-			"New Employee Assigned",
-			`Hello ${manager.name},\n\nA new employee has been assigned to you.\n\nEmployee Name: ${employee.name}\nEmployee Email: ${employee.email}`
-		);
+		try {
+			// Email to manager
+			await sendZeptoMail({
+				to: manager.email,
+				subject: "New Employee Assigned",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">New Team Member</h2>
+						<p>Hello ${manager.name},</p>
+						<p>A new team member has been assigned to you:</p>
+						
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;">
+							<p><strong>Employee Name:</strong> ${employee.name}</p>
+							<p><strong>Email:</strong> ${employee.email}</p>
+							${employee.phone ? `<p><strong>Phone:</strong> ${employee.phone}</p>` : ''}
+						</div>
 
-		await sendEmail(
-			employee.email,
-			"Manager Assigned",
-			`Hello ${employee.name},\n\nYou have been assigned a manager.\n\nManager Name: ${manager.name}\nManager Email: ${manager.email}`
-		);
+						<p>You can now assign tasks and monitor their progress through the dashboard.</p>
+						
+						<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+							<p>Best regards,<br>Admin Team</p>
+						</div>
+					</div>
+				`
+			});
+
+			// Email to employee
+			await sendZeptoMail({
+				to: employee.email,
+				subject: "Your New Manager",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">Manager Assignment</h2>
+						<p>Hello ${employee.name},</p>
+						<p>You have been assigned a new manager:</p>
+						
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;">
+							<p><strong>Manager Name:</strong> ${manager.name}</p>
+							<p><strong>Email:</strong> ${manager.email}</p>
+							${manager.phone ? `<p><strong>Phone:</strong> ${manager.phone}</p>` : ''}
+						</div>
+
+						<p>Your manager will be your primary point of contact for any work-related matters.</p>
+						
+						<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+							<p>Best regards,<br>Admin Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending assignment notifications:", emailError);
+			// Continue with the response even if email fails
+		}
 
 		res.json({
 			message: "Employee assigned to manager successfully",
@@ -1580,34 +1605,84 @@ const approveWithdrawal = async (req, res) => {
 		}
 
 		// Send email to customer
-		await sendEmail(
-			user.email,
-			"Withdrawal Request Processed",
-			`Dear ${user.name},\n\n` +
-				`Your withdrawal request for ₹${amount} has been processed.\n\n` +
-				`Transaction Details:\n` +
-				`Transaction ID: ${transactionId}\n` +
-				`Transfer Date: ${receipt.transferDate}\n` +
-				`Remarks: ${receipt.remarks}\n\n` +
-				`The amount has been transferred to your registered bank account.\n\n` +
-				`Thank you for using our services.\n\n` +
-				`Best regards,\nTaxHarbor Team`
-		);
+		try {
+			await sendZeptoMail({
+				to: user.email,
+				subject: "Withdrawal Request Processed",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50;">Withdrawal Processed Successfully</h2>
+						<p>Dear ${user.name},</p>
+						
+						<div style="background: #e8f5e9; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #4caf50;">
+							<p style="margin: 0; font-weight: bold; color: #2e7d32;">Your withdrawal request for <strong>₹${amount}</strong> has been processed successfully.</p>
+						</div>
+
+						<h3 style="color: #2c3e50; margin-top: 20px;">Transaction Details</h3>
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0;">
+							<p><strong>Transaction ID:</strong> ${transactionId}</p>
+							<p><strong>Amount:</strong> ₹${amount}</p>
+							<p><strong>Transfer Date:</strong> ${receipt.transferDate || 'N/A'}</p>
+							${receipt.remarks ? `<p><strong>Remarks:</strong> ${receipt.remarks}</p>` : ''}
+						</div>
+
+						<p>The amount has been transferred to your registered bank account. Please allow 1-2 business days for the amount to reflect in your account.</p>
+						
+						<div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #eee;">
+							<p>If you have any questions about this transaction, please contact our support team.</p>
+							<p>Best regards,<br>Finshelter Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending withdrawal approval email:", emailError);
+			// Continue with the response even if email fails
+		}
 
 		// Send email to admin
-		await sendEmail(
-			process.env.EMAIL_USER,
-			"Withdrawal Request Processed - Confirmation",
-			`A withdrawal request has been processed:\n\n` +
-				`User: ${user.name} (${user.email})\n` +
-				`Amount: ₹${amount}\n` +
-				`Transaction ID: ${transactionId}\n` +
-				`Transfer Date: ${receipt.transferDate}\n` +
-				`Bank Details:\n` +
-				`Account Number: ${user.bankDetails.accountNumber}\n` +
-				`Bank Name: ${user.bankDetails.bankName}\n` +
-				`IFSC Code: ${user.bankDetails.ifscCode}`
-		);
+		try {
+			await sendZeptoMail({
+				to: process.env.ADMIN_EMAIL || process.env.EMAIL_USER,
+				subject: "Withdrawal Request Processed - Confirmation",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto;">
+						<h2 style="color: #2c3e50; margin-bottom: 20px;">Withdrawal Request Processed</h2>
+						
+						<div style="background: #f0f7ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #2196f3;">
+							<h3 style="margin: 0 0 10px 0; color: #0d47a1;">Transaction Summary</h3>
+							<p style="margin: 5px 0;"><strong>Amount:</strong> ₹${amount}</p>
+							<p style="margin: 5px 0;"><strong>Transaction ID:</strong> ${transactionId}</p>
+							<p style="margin: 5px 0;"><strong>Date:</strong> ${new Date().toLocaleString()}</p>
+						</div>
+
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+							<h3 style="margin: 0 0 10px 0; color: #2c3e50;">User Details</h3>
+							<p style="margin: 5px 0;"><strong>Name:</strong> ${user.name}</p>
+							<p style="margin: 5px 0;"><strong>Email:</strong> ${user.email}</p>
+							${user.phone ? `<p style="margin: 5px 0;"><strong>Phone:</strong> ${user.phone}</p>` : ''}
+						</div>
+
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px;">
+							<h3 style="margin: 0 0 10px 0; color: #2c3e50;">Bank Transfer Details</h3>
+							<p style="margin: 5px 0;"><strong>Account Holder:</strong> ${user.bankDetails.accountHolderName || user.name}</p>
+							<p style="margin: 5px 0;"><strong>Account Number:</strong> ${user.bankDetails.accountNumber}</p>
+							<p style="margin: 5px 0;"><strong>Bank Name:</strong> ${user.bankDetails.bankName}</p>
+							<p style="margin: 5px 0;"><strong>IFSC Code:</strong> ${user.bankDetails.ifscCode}</p>
+							${user.bankDetails.branch ? `<p style="margin: 5px 0;"><strong>Branch:</strong> ${user.bankDetails.branch}</p>` : ''}
+							<p style="margin: 5px 0;"><strong>Transfer Date:</strong> ${receipt.transferDate || 'N/A'}</p>
+						</div>
+
+						<div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 0.9em;">
+							<p>This is an automated notification. Please verify the transaction in the admin panel.</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (adminEmailError) {
+			console.error("Error sending admin notification email:", adminEmailError);
+			// Continue with the response even if admin email fails
+		}
 
 		// Add transaction record to wallet
 		wallet.transactions.push({
@@ -1677,17 +1752,50 @@ const assignServiceToFlexiCustomer = async (req, res) => {
 		await user.save();
 
 		// Send email notification
-		await sendEmail(
-			user.email,
-			"Service Assigned Successfully",
-			`Dear ${user.name},\n\n` +
-				`Your requested service has been assigned.\n\n` +
-				`Order ID: ${orderId}\n` +
-				`Service: ${service.name}\n` +
-				`Expected completion date: ${dueDate.toLocaleDateString()}\n\n` +
-				`You can now track your service status in your dashboard.\n\n` +
-				`Best regards,\nTeam`
-		);
+		try {
+			await sendZeptoMail({
+				to: user.email,
+				subject: "Service Assigned Successfully",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50; margin-bottom: 20px;">Service Assigned</h2>
+						
+						<div style="background: #e8f5e9; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #4caf50;">
+							<p style="margin: 0; font-weight: bold; color: #2e7d32;">Your service request has been successfully assigned!</p>
+						</div>
+
+						<h3 style="color: #2c3e50; margin-bottom: 10px;">Service Details</h3>
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+							<p style="margin: 5px 0;"><strong>Order ID:</strong> ${orderId}</p>
+							<p style="margin: 5px 0;"><strong>Service:</strong> ${service.name}</p>
+							<p style="margin: 5px 0;"><strong>Status:</strong> <span style="color: #2196f3; font-weight: 500;">In Process</span></p>
+							<p style="margin: 5px 0;"><strong>Expected Completion:</strong> ${dueDate.toLocaleDateString()}</p>
+						</div>
+
+						<div style="background: #e3f2fd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+							<h4 style="margin: 0 0 10px 0; color: #1565c0;">Next Steps</h4>
+							<ol style="margin: 0; padding-left: 20px;">
+								<li>Check your dashboard for updates on your service status</li>
+								<li>Upload any required documents if requested</li>
+								<li>Our team will contact you if they need any additional information</li>
+							</ol>
+						</div>
+
+						<div style="text-align: center; margin: 25px 0;">
+							<a href="${process.env.FRONTEND_URL || 'https://your-app-url.com'}/dashboard" style="display: inline-block; background: #2196f3; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 500;">View Dashboard</a>
+						</div>
+
+						<div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 0.9em;">
+							<p>If you have any questions about your service, please reply to this email or contact our support team.</p>
+							<p>Best regards,<br>The Finshelter Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending service assignment email:", emailError);
+			// Continue with the response even if email fails
+		}
 
 		res.json({
 			message: "Service assigned successfully",
@@ -1756,11 +1864,47 @@ const updateCustomerInfo = async (req, res) => {
 		);
 
 		// Send email notification to customer
-		await sendEmail(
-			updatedUser.email,
-			"Profile Information Updated",
-			`Dear ${updatedUser.name},\n\nYour profile information has been updated by an administrator. Please review the changes in your dashboard.\n\nIf you notice any discrepancies, please contact support immediately.\n\nBest regards,\nTaxHarbor Team`
-		);
+		try {
+			await sendZeptoMail({
+				to: updatedUser.email,
+				subject: "Profile Information Updated",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50; margin-bottom: 20px;">Profile Update Notification</h2>
+						
+						<p>Dear ${updatedUser.name},</p>
+						
+						<div style="background: #fff8e1; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #ffc107;">
+							<p style="margin: 0; color: #e65100; font-weight: 500;">Your profile information has been updated by an administrator.</p>
+						</div>
+
+						<h3 style="color: #2c3e50; margin: 20px 0 10px 0;">Important Notice</h3>
+						<p>Please review your updated profile information in your dashboard. If you notice any discrepancies or did not authorize these changes, please contact our support team immediately.</p>
+						
+						<div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+							<p style="margin: 0 0 10px 0; font-weight: 500;">Security Tip:</p>
+							<ul style="margin: 0; padding-left: 20px;">
+								<li>Regularly update your password</li>
+								<li>Never share your login credentials</li>
+								<li>Enable two-factor authentication if available</li>
+							</ul>
+						</div>
+
+						<div style="text-align: center; margin: 25px 0;">
+							<a href="${process.env.FRONTEND_URL || 'https://your-app-url.com'}/dashboard/profile" style="display: inline-block; background: #2196f3; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 500;">View My Profile</a>
+						</div>
+
+						<div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 0.9em;">
+							<p>If you have any questions or concerns, please don't hesitate to contact our support team.</p>
+							<p>Best regards,<br>Finshelter Security Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending profile update notification:", emailError);
+			// Continue with the response even if email fails
+		}
 
 		res.json({
 			message: "Customer information updated successfully",
@@ -1849,24 +1993,52 @@ const assignLeadToEmployee = async (req, res) => {
 		await lead.save();
 
 		// Notify the employee
-		await sendEmail(
-			employee.email,
-			"New Lead Assigned",
-			`Dear ${employee.name},
+		try {
+			await sendZeptoMail({
+				to: employee.email,
+				subject: `New Lead Assigned: ${lead.name} - ${lead.serviceId?.name || 'Service'}`,
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+						<h2 style="color: #2c3e50; margin-bottom: 20px;">New Lead Assigned to You</h2>
+						
+						<p>Dear ${employee.name},</p>
+						
+						<div style="background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #2196f3;">
+							<p style="margin: 0; font-weight: 500; color: #0d47a1;">You've been assigned a new lead. Please review the details below and take appropriate action.</p>
+						</div>
 
-A new lead has been assigned to you:
+						<h3 style="color: #2c3e50; margin: 20px 0 10px 0;">Lead Details</h3>
+						<div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+							<p style="margin: 5px 0;"><strong>Name:</strong> ${lead.name}</p>
+							<p style="margin: 5px 0;"><strong>Email:</strong> ${lead.email}</p>
+							<p style="margin: 5px 0;"><strong>Phone:</strong> ${lead.mobile || 'Not provided'}</p>
+							${lead.serviceId ? `<p style="margin: 5px 0;"><strong>Service:</strong> ${lead.serviceId.name}</p>` : ''}
+							<p style="margin: 5px 0;"><strong>Status:</strong> <span style="color: #ff9800; font-weight: 500;">Assigned</span></p>
+							<p style="margin: 5px 0;"><strong>Assigned On:</strong> ${new Date().toLocaleString()}</p>
+						</div>
 
-Lead Details:
-- Name: ${lead.name}
-			- Email: ${lead.email}
-			- Phone: ${lead.mobile}
-			- Service: ${lead.serviceId.name || "N/A"}
-			
-			Please review this lead in your dashboard and take appropriate action.
-			
-			Best regards,
-			FinShelter Team`
-		);
+						<div style="background: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+							<h4 style="margin: 0 0 10px 0; color: #2e7d32;">Next Steps</h4>
+							<ol style="margin: 0; padding-left: 20px;">
+								<li>Review the lead details in your dashboard</li>
+								<li>Contact the lead as soon as possible</li>
+								<li>Update the lead status after initial contact</li>
+							</ol>
+						</div>
+
+						
+
+						<div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 0.9em;">
+							<p>This is an automated notification. If you believe this was sent in error, please contact your manager.</p>
+							<p>Best regards,<br>Finshelter Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending lead assignment email:", emailError);
+			// Continue with the response even if email fails
+		}
 
 		res.status(200).json({
 			message: "Lead assigned successfully",
@@ -2201,60 +2373,73 @@ const convertLeadToOrder = async (req, res) => {
 - SGST (${gstRate / 2}%): ₹${sgst.toFixed(2)}`;
 
 		// Only send welcome email if this is a new user
-		if (tempPassword) {
-		await sendEmail(
-			lead.email,
-			"Welcome to FinShelter - Your Account and Order Details",
-			`Dear ${lead.name},
-
-Thank you for choosing FinShelter. We are pleased to inform you that your account has been created and your service order has been processed.
-
-LOGIN INFORMATION:
-- Email: ${lead.email}
-- Password: ${tempPassword}
-
-Please go to https://thefinshelter.com/customers/login to log in with the above credentials.
-
-
-ORDER DETAILS:
-- Order ID: ${orderId}
-- Service: ${lead.serviceId.name}${packageInfo}
-${taxInfo}
-- Total Payment Amount: ₹${basePrice.toFixed(2)}
-- Payment Method: ${paymentDetails.method}
-- Due Date: ${dueDate.toLocaleDateString()}
-
-You can track your order status and communicate with our team through your dashboard.
-
-If you have any questions, please contact our support team.
-
-Best regards,
-FinShelter Team`
-		);
-		} else {
-			// Send an order confirmation email to existing user
-			await sendEmail(
-				lead.email,
-				"New Order Confirmation - FinShelter",
-				`Dear ${lead.name},
-
-Thank you for your new order with FinShelter.
-
-ORDER DETAILS:
-- Order ID: ${orderId}
-- Service: ${lead.serviceId.name}${packageInfo}
-${taxInfo}
-- Total Payment Amount: ₹${basePrice.toFixed(2)}
-- Payment Method: ${paymentDetails.method}
-- Due Date: ${dueDate.toLocaleDateString()}
-
-You can track your order status and communicate with our team through your dashboard.
-
-If you have any questions, please contact our support team.
-
-Best regards,
-FinShelter Team`
-			);
+		try {
+			if (tempPassword) {
+				await sendZeptoMail({
+					to: lead.email,
+					subject: `Welcome to Finshelter - Your Account & Order Details`,
+					html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+						<div style="background: #2c3e50; padding: 20px; text-align: center; border-radius: 5px 5px 0 0;">
+							<h1 style="color: white; margin: 0;">Welcome to Finshelter!</h1>
+							<p style="color: #bdc3c7; margin: 10px 0 0 0;">Your account has been created</p>
+						</div>
+						<div style="padding: 20px; background: #f8f9fa;">
+							<h2 style="color: #2c3e50;">Login Information</h2>
+							<ul style="list-style: none; padding: 0;">
+								<li><strong>Email:</strong> ${lead.email}</li>
+								<li><strong>Password:</strong> ${tempPassword}</li>
+							</ul>
+							<p style="margin-top: 10px;">Please <a href="https://thefinshelter.com/customers/login" style="color: #2196f3;">log in</a> to your dashboard to get started.</p>
+							<h2 style="color: #2c3e50; margin-top: 30px;">Order Details</h2>
+							<table style="width: 100%; border-collapse: collapse;">
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Order ID:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${orderId}</td></tr>
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Service:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.serviceId.name}</td></tr>
+								${selectedPackage ? `<tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>Package:</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>${selectedPackage.name}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>Base Price:</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>₹${basePrice.toFixed(2)}</td></tr>` : ''}
+								${isInterstate ? `<tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>IGST (${gstRate}%):</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>₹${igst.toFixed(2)}</td></tr>` : `<tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>CGST (${gstRate/2}%):</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>₹${cgst.toFixed(2)}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>SGST (${gstRate/2}%):</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>₹${sgst.toFixed(2)}</td></tr>`}
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Total Payment Amount:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">₹${basePrice.toFixed(2)}</td></tr>
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Payment Method:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${paymentDetails.method}</td></tr>
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Due Date:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${dueDate.toLocaleDateString()}</td></tr>
+							</table>
+							<p style="margin-top: 20px;">You can track your order status and communicate with our team through your dashboard.</p>
+							<p>If you have any questions, please contact our support team.</p>
+							<p style="margin-top: 30px; color: #888;">Best regards,<br>Finshelter Team</p>
+						</div>
+					</div>
+					`
+				});
+			} else {
+				await sendZeptoMail({
+					to: lead.email,
+					subject: `New Order Confirmation - Finshelter`,
+					html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+						<div style="background: #2c3e50; padding: 20px; text-align: center; border-radius: 5px 5px 0 0;">
+							<h1 style="color: white; margin: 0;">Order Confirmed</h1>
+							<p style="color: #bdc3c7; margin: 10px 0 0 0;">Thank you for your order with Finshelter</p>
+						</div>
+						<div style="padding: 20px; background: #f8f9fa;">
+							<h2 style="color: #2c3e50;">Order Details</h2>
+							<table style="width: 100%; border-collapse: collapse;">
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Order ID:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${orderId}</td></tr>
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Service:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.serviceId.name}</td></tr>
+								${selectedPackage ? `<tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>Package:</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>${selectedPackage.name}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>Base Price:</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>₹${basePrice.toFixed(2)}</td></tr>` : ''}
+								${isInterstate ? `<tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>IGST (${gstRate}%):</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>₹${igst.toFixed(2)}</td></tr>` : `<tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>CGST (${gstRate/2}%):</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>₹${cgst.toFixed(2)}</td></tr><tr><td style='padding:8px 0; border-bottom:1px solid #eee;'>SGST (${gstRate/2}%):</td><td style='padding:8px 0; border-bottom:1px solid #eee; text-align:right;'>₹${sgst.toFixed(2)}</td></tr>`}
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Total Payment Amount:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">₹${basePrice.toFixed(2)}</td></tr>
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Payment Method:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${paymentDetails.method}</td></tr>
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Due Date:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${dueDate.toLocaleDateString()}</td></tr>
+							</table>
+							<p style="margin-top: 20px;">You can track your order status and communicate with our team through your dashboard.</p>
+							<p>If you have any questions, please contact our support team.</p>
+							<p style="margin-top: 30px; color: #888;">Best regards,<br>Finshelter Team</p>
+						</div>
+					</div>
+					`
+				});
+			}
+		} catch (emailError) {
+			console.error("Error sending order confirmation email:", emailError);
+			// Continue with the flow even if email fails
 		}
 
 		res.status(200).json({
@@ -2306,26 +2491,41 @@ const sendLeadBackToEmployee = async (req, res) => {
 		await lead.save();
 
 		// Notify the employee
-		await sendEmail(
-			lead.assignedToEmployee.email,
-			"Lead Requires Review",
-			`Dear ${lead.assignedToEmployee.name},
-
-A lead that you previously approved has been sent back for review by the admin:
-
-Lead Details:
-- Name: ${lead.name}
-- Email: ${lead.email}
-- Mobile: ${lead.mobile}
-- Service: ${lead.serviceId?.name || "N/A"}
-
-Admin Note: ${lead.adminNote}
-
-Please review this lead in your dashboard and take appropriate action.
-
-Best regards,
-Admin Team`
-		);
+		try {
+			await sendZeptoMail({
+				to: lead.assignedToEmployee.email,
+				subject: "Lead Requires Review",
+				html: `
+					<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+						<div style="background: #ffebee; padding: 20px; border-radius: 5px 5px 0 0; border-left: 4px solid #e53935;">
+							<h2 style="color: #e53935; margin: 0;">Lead Sent Back for Review</h2>
+						</div>
+						<div style="padding: 20px; background: #f8f9fa;">
+							<p>Dear ${lead.assignedToEmployee.name},</p>
+							<p>A lead that you previously approved has been sent back for review by the admin. Please see the details below:</p>
+							<h3 style="color: #2c3e50;">Lead Details</h3>
+							<table style="width: 100%; border-collapse: collapse;">
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Name:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.name}</td></tr>
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Email:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.email}</td></tr>
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Mobile:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.mobile}</td></tr>
+								<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Service:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.serviceId?.name || 'N/A'}</td></tr>
+							</table>
+							<div style="margin: 20px 0; background: #fff3e0; padding: 15px; border-radius: 5px; border-left: 4px solid #ffa726;">
+								<p style="margin: 0;"><strong>Admin Note:</strong> ${lead.adminNote}</p>
+							</div>
+							<p>Please review this lead in your dashboard and take appropriate action.</p>
+							<div style="text-align: center; margin: 25px 0;">
+								<a href="${process.env.FRONTEND_URL || 'https://your-app-url.com'}/employee/leads/${lead._id}" style="display: inline-block; background: #e53935; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 500;">Review Lead</a>
+							</div>
+							<p style="margin-top: 30px; color: #888;">Best regards,<br>Admin Team</p>
+						</div>
+					</div>
+				`
+			});
+		} catch (emailError) {
+			console.error("Error sending lead sent-back notification:", emailError);
+			// Continue with the flow even if email fails
+		}
 
 		res.status(200).json({
 			message: "Lead sent back to employee successfully",
@@ -2388,11 +2588,31 @@ const sendOrderForL1Review = async (req, res) => {
         // Send email notification to L1 employee
         const l1Employee = await User.findById(employee.l1EmployeeId);
         if (l1Employee) {
-            await sendEmail(
-                l1Employee.email,
-                "New Order Review Request",
-                `Hello ${l1Employee.name},\n\nA new order #${orderId} requires your review. Please check your dashboard for details.`
-            );
+            try {
+                await sendZeptoMail({
+                    to: l1Employee.email,
+                    subject: "New Order Review Request",
+                    html: `
+                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+                            <div style="background: #e3f2fd; padding: 20px; border-radius: 5px 5px 0 0; border-left: 4px solid #2196f3;">
+                                <h2 style="color: #1565c0; margin: 0;">Order Requires L1 Review</h2>
+                            </div>
+                            <div style="padding: 20px; background: #f8f9fa;">
+                                <p>Hello ${l1Employee.name},</p>
+                                <p>A new order <strong>#${orderId}</strong> requires your review.</p>
+                                <p>Please check your dashboard for further details and next steps.</p>
+                                <div style="text-align: center; margin: 25px 0;">
+                                    <a href="${process.env.FRONTEND_URL || 'https://your-app-url.com'}/employee/l1/review/${orderId}" style="display: inline-block; background: #2196f3; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 500;">Review Order</a>
+                                </div>
+                                <p style="margin-top: 30px; color: #888;">Best regards,<br>Finshelter Team</p>
+                            </div>
+                        </div>
+                    `
+                });
+            } catch (emailError) {
+                console.error("Error sending L1 review notification:", emailError);
+                // Continue with the flow even if email fails
+            }
         }
 
         res.status(200).json({

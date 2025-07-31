@@ -10,18 +10,26 @@ const transporter = nodemailer.createTransport({
 	},
 });
 
-const sendEmail = async (to, subject, text) => {
+const sendZeptoMail = require("./sendZeptoMail");
+
+// Wrapper to support both html and text
+const sendZeptoMailWrapper = async ({ to, subject, text, html }) => {
 	try {
-		await transporter.sendMail({
-			from: process.env.EMAIL_USER,
+		await sendZeptoMail({
 			to,
 			subject,
-			text,
+			html: html || `<pre>${text}</pre>`
 		});
-		console.log(`Email sent to ${to}`);
+		console.log(`ZeptoMail sent to ${to}`);
 	} catch (error) {
-		console.error(`Failed to send email to ${to}:`, error);
+		console.error(`Failed to send ZeptoMail to ${to}:`, error);
 	}
+};
+
+// For compatibility, you may export sendZeptoMail as sendEmail if needed
+module.exports = {
+	sendZeptoMail: sendZeptoMailWrapper,
+	// sendEmail: sendZeptoMailWrapper // Uncomment if you want to alias
 };
 
 // Utility function to handle customer-employee assignments
@@ -97,18 +105,48 @@ const handleCustomerEmployeeAssignment = async (
 
 		await employee.save();
 
-		// Send notification emails
+		// Send notification emails using ZeptoMail
 		await Promise.all([
-			sendEmail(
-				customer.email,
-				"Employee Assigned",
-				`Hello ${customer.name},\n\nAn employee has been assigned to assist you with your service.\n\nEmployee Name: ${employee.name}\nEmployee Email: ${employee.email}`
-			),
-			sendEmail(
-				employee.email,
-				"New Customer Assigned",
-				`A new customer has been assigned to you.\n\nCustomer Name: ${customer.name}\nCustomer Email: ${customer.email}`
-			),
+			sendZeptoMail({
+				to: customer.email,
+				subject: "Employee Assigned",
+				html: `
+					<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;'>
+						<div style='background: #e3f2fd; padding: 20px; border-radius: 5px 5px 0 0; border-left: 4px solid #2196f3;'>
+							<h2 style='color: #1565c0; margin: 0;'>Employee Assigned</h2>
+						</div>
+						<div style='padding: 20px; background: #f8f9fa;'>
+							<p>Hello ${customer.name},</p>
+							<p>An employee has been assigned to assist you with your service.</p>
+							<ul style='padding-left:18px;'>
+								<li><strong>Employee Name:</strong> ${employee.name}</li>
+								<li><strong>Employee Email:</strong> ${employee.email}</li>
+							</ul>
+							<p style='margin-top: 30px; color: #888;'>Best regards,<br>Finshelter Team</p>
+						</div>
+					</div>
+				`
+			}),
+			sendZeptoMail({
+				to: employee.email,
+				subject: "New Customer Assigned",
+				html: `
+					<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;'>
+						<div style='background: #e3f2fd; padding: 20px; border-radius: 5px 5px 0 0; border-left: 4px solid #2196f3;'>
+							<h2 style='color: #1565c0; margin: 0;'>New Customer Assigned</h2>
+						</div>
+						<div style='padding: 20px; background: #f8f9fa;'>
+							<p>Hello ${employee.name},</p>
+							<p>A new customer has been assigned to you.</p>
+							<ul style='padding-left:18px;'>
+								<li><strong>Customer Name:</strong> ${customer.name}</li>
+								<li><strong>Customer Email:</strong> ${customer.email}</li>
+							</ul>
+							<p style='margin-top: 30px; color: #888;'>Best regards,<br>Finshelter Team</p>
+						</div>
+					</div>
+				`
+			})
 		]);
 
 		return { success: true, employee };

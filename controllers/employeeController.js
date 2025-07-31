@@ -7,6 +7,7 @@ const Lead = require("../models/leadModel");
 const path = require("path");
 const fs = require("fs");
 const { sendEmail } = require("../utils/emailUtils");
+const sendZeptoMail = require("../utils/sendZeptoMail");
 
 // Utility: Hash password using SHA-256
 const hashPassword = (password, salt) => {
@@ -798,27 +799,37 @@ const rejectLead = async (req, res) => {
 		// Notify admin about rejection
 		const admin = await User.findOne({ role: "admin" });
 		if (admin && admin.email) {
-			await sendEmail(
-				admin.email,
-				"Lead Rejected",
-				`A lead has been rejected by an employee:
-
-Lead Details:
-- ID: ${lead._id}
-- Name: ${lead.name}
-- Email: ${lead.email}
-- Service: ${
-					lead.serviceId
-						? typeof lead.serviceId === "object"
-							? lead.serviceId.name
-							: lead.serviceId
-						: "N/A"
-				}
-
-Reason for rejection: ${reason}
-
-Please review this in the admin dashboard.`
-			);
+			try {
+				await sendZeptoMail({
+					to: admin.email,
+					subject: "Lead Rejected by Employee",
+					html: `
+						<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+							<div style="background: #ffebee; padding: 20px; border-radius: 5px 5px 0 0; border-left: 4px solid #e53935;">
+								<h2 style="color: #e53935; margin: 0;">Lead Rejected</h2>
+							</div>
+							<div style="padding: 20px; background: #f8f9fa;">
+								<p>A lead has been rejected by an employee. Please review the details below:</p>
+								<h3 style="color: #2c3e50;">Lead Details</h3>
+								<table style="width: 100%; border-collapse: collapse;">
+									<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">ID:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead._id}</td></tr>
+									<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Name:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.name}</td></tr>
+									<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Email:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.email}</td></tr>
+									<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Service:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.serviceId && typeof lead.serviceId === 'object' ? lead.serviceId.name : (lead.serviceId || 'N/A')}</td></tr>
+								</table>
+								<div style="margin: 20px 0; background: #fff3e0; padding: 15px; border-radius: 5px; border-left: 4px solid #ffa726;">
+									<p style="margin: 0;"><strong>Reason for rejection:</strong> ${reason}</p>
+								</div>
+								<p>Please review this lead in the admin dashboard.</p>
+								<p style="margin-top: 30px; color: #888;">Best regards,<br>Finshelter Team</p>
+							</div>
+						</div>
+					`
+				});
+			} catch (emailError) {
+				console.error("Error sending lead rejection notification:", emailError);
+				// Continue with the flow even if email fails
+			}
 		}
 
 		res.status(200).json({
@@ -923,34 +934,41 @@ const uploadLeadDocuments = async (req, res) => {
 		// Notify admin about document upload
 		const admin = await User.findOne({ role: "admin" });
 		if (admin && admin.email) {
-			await sendEmail(
-				admin.email,
-				"Lead Documents Uploaded",
-				`Documents have been uploaded for a lead:
-
-Lead Details:
-- ID: ${lead._id}
-- Name: ${lead.name}
-- Email: ${lead.email}
-- Service: ${
-					lead.serviceId
-						? typeof lead.serviceId === "object"
-							? lead.serviceId.name
-							: lead.serviceId
-						: "N/A"
-				}
-
-${note ? `Employee Note: ${note}` : ""}
-
-Payment Details:
-${paymentAmount ? `- Amount: ₹${paymentAmount}` : ""}
-${paymentMethod ? `- Method: ${paymentMethod}` : ""}
-${paymentReference ? `- Reference: ${paymentReference}` : ""}
-
-${
-	documentRecords.length
-} document(s) uploaded. Please review this in the admin dashboard.`
-			);
+			try {
+				await sendZeptoMail({
+					to: admin.email,
+					subject: "Lead Documents Uploaded",
+					html: `
+						<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+							<div style="background: #e3f2fd; padding: 20px; border-radius: 5px 5px 0 0; border-left: 4px solid #2196f3;">
+								<h2 style="color: #1565c0; margin: 0;">Lead Documents Uploaded</h2>
+							</div>
+							<div style="padding: 20px; background: #f8f9fa;">
+								<p>Documents have been uploaded for a lead. Please review the details below:</p>
+								<h3 style="color: #2c3e50;">Lead Details</h3>
+								<table style="width: 100%; border-collapse: collapse;">
+									<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">ID:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead._id}</td></tr>
+									<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Name:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.name}</td></tr>
+									<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Email:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.email}</td></tr>
+									<tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;">Service:</td><td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${lead.serviceId && typeof lead.serviceId === 'object' ? lead.serviceId.name : (lead.serviceId || 'N/A')}</td></tr>
+								</table>
+								${note ? `<div style='margin:20px 0; background:#fff3e0; padding:15px; border-radius:5px; border-left:4px solid #ffa726;'><strong>Employee Note:</strong> ${note}</div>` : ''}
+								<h3 style="color: #2c3e50; margin-top:25px;">Payment Details</h3>
+								<ul style="padding-left:18px;">
+									${paymentAmount ? `<li><strong>Amount:</strong> ₹${paymentAmount}</li>` : ''}
+									${paymentMethod ? `<li><strong>Method:</strong> ${paymentMethod}</li>` : ''}
+									${paymentReference ? `<li><strong>Reference:</strong> ${paymentReference}</li>` : ''}
+								</ul>
+								<p><strong>${documentRecords.length}</strong> document(s) uploaded. Please review this in the admin dashboard.</p>
+								<p style="margin-top: 30px; color: #888;">Best regards,<br>Finshelter Team</p>
+							</div>
+						</div>
+					`
+				});
+			} catch (emailError) {
+				console.error("Error sending lead document upload notification:", emailError);
+				// Continue with the flow even if email fails
+			}
 		}
 
 		res.status(200).json({
@@ -1081,11 +1099,26 @@ const sendOrderForL1Review = async (req, res) => {
 		try {
 			const l1Employee = await User.findOne({ _id: employee.L1EmpCode });
 			if (l1Employee && l1Employee.email) {
-				await sendEmail(
-					l1Employee.email,
-					"New Order Review Request",
-					`Hello ${l1Employee.name},\n\nA new order #${orderId} requires your review. Please check your dashboard for details.`
-				);
+				await sendZeptoMail({
+					to: l1Employee.email,
+					subject: "New Order Review Request",
+					html: `
+						<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+							<div style="background: #e3f2fd; padding: 20px; border-radius: 5px 5px 0 0; border-left: 4px solid #2196f3;">
+								<h2 style="color: #1565c0; margin: 0;">Order Requires L1 Review</h2>
+							</div>
+							<div style="padding: 20px; background: #f8f9fa;">
+								<p>Hello ${l1Employee.name},</p>
+								<p>A new order <strong>#${orderId}</strong> requires your review.</p>
+								<p>Please check your dashboard for further details and next steps.</p>
+								<div style="text-align: center; margin: 25px 0;">
+									<a href="${process.env.FRONTEND_URL || 'https://your-app-url.com'}/employee/l1/review/${orderId}" style="display: inline-block; background: #2196f3; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 500;">Review Order</a>
+								</div>
+								<p style="margin-top: 30px; color: #888;">Best regards,<br>Finshelter Team</p>
+							</div>
+						</div>
+					`
+				});
 			}
 		} catch (emailError) {
 			console.error("Error sending email notification:", emailError);
@@ -1141,7 +1174,7 @@ const forgotPassword = async (req, res) => {
 		// Create reset URL (hardcoded frontend URL)
 		// const resetUrl = `https://thefinshelter.com/employees/reset-password/${resetToken}`;
 
-		const resetUrl = `http://localhost:5173/employees/reset-password/${resetToken}`;
+		const resetUrl = `https://thefinshelter.com/employees/reset-password/${resetToken}`;
 
 		// Email content
 		const subject = "Password Reset Request";
@@ -1216,7 +1249,7 @@ const forgotPassword = async (req, res) => {
                     <p>If you did not request this, please ignore this email and your password will remain unchanged.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; ${new Date().getFullYear()} TaxHarbor. All rights reserved.</p>
+                    <p>&copy; ${new Date().getFullYear()} Finshelter. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -1224,7 +1257,16 @@ const forgotPassword = async (req, res) => {
         `;
 
 		// Send password reset email
-		await sendEmail(employee.email, subject, text, htmlContent);
+		try {
+			await sendZeptoMail({
+				to: employee.email,
+				subject,
+				html: htmlContent
+			});
+		} catch (emailError) {
+			console.error("Error sending password reset email:", emailError);
+			// Continue with the flow even if email fails
+		}
 
 		res.status(200).json({
 			success: true,

@@ -1,18 +1,7 @@
-const nodemailer = require('nodemailer');
+const sendZeptoMail = require('../utils/sendZeptoMail');
 const dotenv = require('dotenv');
 
 dotenv.config();
-
-// Create a transporter using SMTP transport
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-  port: process.env.EMAIL_PORT || 587,
-  secure: process.env.EMAIL_SECURE === 'true', // true for 465, false for other ports
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
 
 // Send contact email
 const sendContactEmail = async (req, res) => {
@@ -58,10 +47,10 @@ const sendContactEmail = async (req, res) => {
     };
 
     // Send email to admin
-    await transporter.sendMail(adminMailOptions);
+    await sendZeptoMail(adminMailOptions);
 
     // Send auto-reply to customer
-    await transporter.sendMail(customerMailOptions);
+    await sendZeptoMail(customerMailOptions);
 
     return res.status(200).json({ message: 'Your message has been sent successfully!' });
   } catch (error) {

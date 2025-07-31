@@ -85,8 +85,9 @@ router.get("/wallet/test", authMiddleware, (req, res) => {
 	res.json({ message: "Wallet routes are working", user: req.user });
 });
 
-// Lead creation route (no auth required)
-router.post('/lead', createLead);
+// Lead creation route (supports both guests and logged-in users)
+const authOptional = require("../middlewares/authOptional");
+router.post('/lead', authOptional, createLead);
 
 // Email validation route (no auth required)
 router.get("/check-email", checkEmailAvailability);
