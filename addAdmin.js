@@ -30,8 +30,8 @@ mongoose.connect(process.env.MONGO_URI, {
 
 // Function to create an admin user
 const createAdminUser = async () => {
-  const email = 'admin@gmail.com'; // Set the admin email
-  const password = 'admin@123'; // Set the admin password
+  const email = 'rkiran352@gmail.com'; // Set the admin email
+  const password = 'admin@1ZNu!>9z'; // Set the admin password
   const role = 'admin'; // Set the role as admin
   const name = 'Admin User'; // Add name for the admin
 
@@ -63,5 +63,5 @@ const createAdminUser = async () => {
   } catch (error) {
     console.error('Error creating admin user:', error);
     process.exit(1); // Exit the process with error status
-  }
+  } 
 };

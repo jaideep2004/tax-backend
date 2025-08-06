@@ -12,7 +12,7 @@ const JWT_ERROR_MESSAGES = {
 const verifyToken = (token, secret) => {
     try {
         return jwt.verify(token, secret);
-    } catch (error) {
+    } catch (error) { 
         // Convert JWT errors to a standardized format
         const errorMessage = JWT_ERROR_MESSAGES[error.name] || JWT_ERROR_MESSAGES.default;
         throw new Error(errorMessage);

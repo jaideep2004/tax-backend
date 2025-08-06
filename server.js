@@ -73,7 +73,7 @@ app.get('/files/:filename', (req, res) => {
 const PORT = process.env.PORT || 8000;
 
 app.get("/", (req, res) => {
-	res.send("FINSHELTER backend 31 july!!");
+	res.send("FINSHELTER backend 7 August!!");
 });
 
 
@@ -85,7 +85,7 @@ app.get("/", (req, res) => {
 
 const options = {
 	key: fs.readFileSync(path.join(__dirname, "certs/privkey.pem")),
-	cert: fs.readFileSync(path.join(__dirname, "certs/fullchain.pem")),
+	cert: fs.readFileSync(path.join(__dirname, "certs/fullchain.pem")), 
 };
 
 https.createServer(options, app).listen(PORT, () => {

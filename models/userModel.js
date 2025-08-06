@@ -8,7 +8,7 @@ const documentSchema = new mongoose.Schema({
 	path: { type: String, required: true },
 	mimetype: { type: String, required: true },
 	size: { type: Number, required: true },
-	uploadedAt: { type: Date, default: Date.now },
+	uploadedAt: { type: Date, default: Date.now }, 
 });
 
 const querySchema = new mongoose.Schema({
