@@ -25,70 +25,77 @@ app.use("/api/messages", messageRoutes); // Message routes
 app.use("/api/employees", employeeRoutes); // Employee routes
 app.use("/api/contact", contactRoutes); // Contact form routes
 
-app.use("/uploads", (req, res, next) => {
-	// Add specific CORS headers for file access
-	res.header("Access-Control-Allow-Origin", "*");
-	res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-	next();
-}, express.static(path.join(__dirname, "uploads")));
+app.use(
+	"/uploads",
+	(req, res, next) => {
+		// Add specific CORS headers for file access
+		res.header("Access-Control-Allow-Origin", "*");
+		res.header(
+			"Access-Control-Allow-Headers",
+			"Origin, X-Requested-With, Content-Type, Accept"
+		);
+		next();
+	},
+	express.static(path.join(__dirname, "uploads"))
+);
 
 // Direct file access route for documents
-app.get('/files/:filename', (req, res) => {
+app.get("/files/:filename", (req, res) => {
 	const filename = req.params.filename;
-	
+
 	// First try to find the file in any subdirectory of uploads
 	const findFileInDir = (dir, filename, found = []) => {
 		const files = fs.readdirSync(dir);
-		
+
 		for (const file of files) {
 			const filePath = path.join(dir, file);
 			const stat = fs.statSync(filePath);
-			
+
 			if (stat.isDirectory()) {
 				findFileInDir(filePath, filename, found);
 			} else if (file === filename) {
 				found.push(filePath);
 			}
 		}
-		
+
 		return found;
 	};
-	
+
 	try {
-		const uploadsDir = path.join(__dirname, 'uploads');
+		const uploadsDir = path.join(__dirname, "uploads");
 		const foundFiles = findFileInDir(uploadsDir, filename, []);
-		
+
 		if (foundFiles.length > 0) {
 			return res.sendFile(foundFiles[0]);
 		}
-		
+
 		// If file not found
-		res.status(404).send('File not found');
+		res.status(404).send("File not found");
 	} catch (error) {
-		console.error('Error serving file:', error);
-		res.status(500).send('Error serving file');
+		console.error("Error serving file:", error);
+		res.status(500).send("Error serving file");
 	}
 });
 
 const PORT = process.env.PORT || 8000;
 
 app.get("/", (req, res) => {
-	res.send("FINSHELTER backend 7 August!!");
+	res.send("FINSHELTER backend 16 August certs!!");
 });
-
 
 // app.listen(PORT, () => {
 // 	console.log(`Server running on port ${PORT}`);
 // });
 
-
-
 const options = {
-	key: fs.readFileSync(path.join(__dirname, "certs/privkey.pem")),
-	cert: fs.readFileSync(path.join(__dirname, "certs/fullchain.pem")), 
+	key: fs.readFileSync(
+		"/etc/letsencrypt/live/195-35-45-82.sslip.io/privkey.pem"
+	),
+	cert: fs.readFileSync(
+		"/etc/letsencrypt/live/195-35-45-82.sslip.io/fullchain.pem"
+	),
 };
 
 https.createServer(options, app).listen(PORT, () => {
 	console.log(`Server running on port ${PORT} (HTTPS)`);
 });
- 
